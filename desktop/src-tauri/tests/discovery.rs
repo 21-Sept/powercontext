@@ -21,7 +21,7 @@ use powercontext_desktop::{
         profiles::ProfileRepository,
         session::ConnectionManager,
     },
-    credentials::WindowsVault,
+    credentials::NativeVault,
 };
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -85,7 +85,7 @@ async fn check(status: u16, document: Value, qualified: bool) -> DiscoveryResult
     let directory = tempfile::tempdir().unwrap();
     let repository = ProfileRepository::open(
         directory.path().join("profiles.json"),
-        Arc::new(WindowsVault),
+        Arc::new(NativeVault),
     )
     .unwrap();
     let manager = if qualified {
