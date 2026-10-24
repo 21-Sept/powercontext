@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-//! Discovery observations and operation qualification are independent of health and authorization.
+//! Operation availability requires discovery compatibility and explicit qualification evidence.
+//! A failed discovery observation gates operations until a successful recheck; health is not proof.
 use super::session::CompatibilityProfile;
 use crate::{
     error::SafeError,

@@ -104,6 +104,8 @@ Qualification still requires an explicitly selected native record matching the b
 
 Connection checks and anonymous identity revalidation still perform readiness probes. The observed `server_id` is recorded with the check; deployment-aware context fencing and explicit readiness separation are not established by this discovery result.
 
+Connections displays discovery separately from the compatibility verdict, with guidance for denied or temporarily unavailable discovery and the reason for an incompatible product or major version. A failed discovery check keeps business operations unavailable; it does not remove the selected qualification record. After correcting the connection or service, explicitly check the connection again to reassess operation availability. Only a discovery 404 permits the qualified legacy policy described above.
+
 ## Contracts and resources
 
 `pnpm --dir desktop generate` derives TypeScript schemas, the reviewed eleven-operation manifest, and the Rust wire models from `openapi/powercontext.yaml`; `generate:check` detects drift, including a normalized contract SHA-256. The OpenAPI Generator CLI version is pinned in `desktop/openapitools.json`, and the limited Rust customization lives in `desktop/scripts/openapi-generator/rust/`. Generated `src-tauri/src/transport/wire.rs` must not be edited by hand: after changing the contract or generator template, run `pnpm --dir desktop generate`, then run `pnpm --dir desktop generate:check` in CI. Typed Rust adapters consume that generated manifest and generated wire schemas. No public route is independently handwritten in the application. The manifest is not an IPC permission grant.

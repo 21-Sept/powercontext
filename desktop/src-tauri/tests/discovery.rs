@@ -22,9 +22,13 @@ use powercontext_desktop::{
         session::ConnectionManager,
     },
     credentials::NativeVault,
+    error::SafeError,
 };
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU16, Ordering},
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
@@ -38,13 +42,28 @@ fn document() -> Value {
         "memory.explicit":{"version":{"major":1,"minor":0},"operations":["remember_memory","search_memory"]}
     }})
 }
-async fn check(status: u16, document: Value, qualified: bool) -> DiscoveryResult {
+struct Fixture {
+    manager: ConnectionManager,
+    id: String,
+    status: Arc<AtomicU16>,
+    server: tokio::task::JoinHandle<()>,
+    _directory: tempfile::TempDir,
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        self.server.abort();
+    }
+}
+async fn fixture(status: u16, document: Value, qualified: bool) -> Fixture {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}/prefix", listener.local_addr().unwrap());
+    let status = Arc::new(AtomicU16::new(status));
+    let response_status = status.clone();
     let server = tokio::spawn(async move {
         loop {
             let (mut socket, _) = listener.accept().await.unwrap();
             let document = document.clone();
+            let status = response_status.load(Ordering::Relaxed);
             tokio::spawn(async move {
                 let mut bytes = Vec::new();
                 loop {
@@ -71,6 +90,9 @@ async fn check(status: u16, document: Value, qualified: bool) -> DiscoveryResult
                     ),
                     "/prefix/v1/access/me" => (503, json!({"error":{"code":"runtime_not_ready"}})),
                     "/prefix/v1/capabilities" => (403, json!({})),
+                    path if path.starts_with("/prefix/v1/scopes?") => {
+                        (200, json!({"items":[],"next_cursor":null}))
+                    }
                     _ => (200, json!({"status":"ok"})),
                 };
                 let body = body.to_string();
@@ -96,12 +118,21 @@ async fn check(status: u16, document: Value, qualified: bool) -> DiscoveryResult
     let state = manager.save_profile(serde_json::from_value(json!({"id":null,"revision":null,"name":"Synthetic",
         "endpoint":endpoint,"authentication":"unauthenticated_loopback","caPem":null,"compatibility":common::PROFILE_ID,
         "keepCredential":false,"credential":null})).unwrap()).unwrap();
-    let result = manager.check(&state.profiles[0].id, false).await.unwrap();
+    Fixture {
+        manager,
+        id: state.profiles[0].id.clone(),
+        status,
+        server,
+        _directory: directory,
+    }
+}
+async fn check(status: u16, document: Value, qualified: bool) -> DiscoveryResult {
+    let fixture = fixture(status, document, qualified).await;
+    let result = fixture.manager.check(&fixture.id, false).await.unwrap();
     assert!(
         result.active.is_none(),
         "passive discovery must not activate a connection"
     );
-    server.abort();
     result
         .reports
         .into_iter()
@@ -109,6 +140,49 @@ async fn check(status: u16, document: Value, qualified: bool) -> DiscoveryResult
         .unwrap()
         .discovery
         .unwrap()
+}
+
+#[tokio::test]
+async fn qualified_connection_recovers_from_discovery_503_after_explicit_recheck() {
+    let fixture = fixture(200, document(), true).await;
+    let state = fixture.manager.check(&fixture.id, true).await.unwrap();
+    assert!(state.active.unwrap().report.compatibility_verified);
+
+    fixture.status.store(503, Ordering::Relaxed);
+    let state = fixture.manager.check(&fixture.id, true).await.unwrap();
+    let report = &state.active.as_ref().unwrap().report;
+    assert_eq!(
+        report.discovery.as_ref().unwrap().status,
+        DiscoveryStatus::Unavailable
+    );
+    assert!(!report.compatibility_verified);
+    assert_eq!(
+        fixture
+            .manager
+            .scopes(state.generation, "", None)
+            .await
+            .err()
+            .unwrap()
+            .code,
+        SafeError::CompatibilityUnverified
+    );
+
+    fixture.status.store(200, Ordering::Relaxed);
+    let state = fixture.manager.check(&fixture.id, true).await.unwrap();
+    let active = state.active.as_ref().unwrap();
+    assert_eq!(active.connection_id, fixture.id);
+    assert!(active.report.compatibility_verified);
+    assert_eq!(
+        active.report.discovery.as_ref().unwrap().status,
+        DiscoveryStatus::Supported
+    );
+    assert!(
+        fixture
+            .manager
+            .scopes(state.generation, "", None)
+            .await
+            .is_ok()
+    );
 }
 
 #[tokio::test]
