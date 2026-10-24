@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 
-import type { DiscoveryResult } from "../generated/ipc";
+import type { CheckReport, DiscoveryResult } from "../generated/ipc";
+import type { operations } from "../generated/operations";
+import { operationSupported } from "./context";
 
 export const connectionMessages = {
   zh: {
@@ -72,6 +74,15 @@ export const connectionMessages = {
     discovery_product_mismatch: "该地址返回的不是 PowerContext Server。",
     discovery_schema_version: "发现响应的 major 版本不受支持。",
     discovery_api_version: "Server API 的 major 版本不受支持。",
+    operation_feature_missing:
+      "Server 未声明此操作所需的功能，请核对受支持的 Server 构建。",
+    operation_feature_version:
+      "此操作所需的功能版本不受支持，请核对 Server 构建。",
+    operation_missing: "Server 未声明支持此操作，其他已验证操作仍可使用。",
+    operation_qualification_required:
+      "所选兼容配置没有此操作的独立验证记录，请核对该操作支持的 Server 构建和兼容配置。",
+    operation_unverified:
+      "此连接的该项操作尚未验证，请核对 Server 支持情况和兼容配置。",
     save: "保存配置",
     check: "检查连接",
     activate: "使用此连接",
@@ -103,6 +114,8 @@ export const connectionMessages = {
     disconnect: "断开桌面连接",
     scope: "选择精确范围",
     scopeQuery: "按范围标题查找",
+    scopeListUnavailable: "范围查找不可用",
+    scopeSelectUnavailable: "范围选择不可用",
     find: "查找范围",
     more: "下一页",
     empty: "本页没有可访问的范围。",
@@ -206,6 +219,16 @@ export const connectionMessages = {
     discovery_schema_version:
       "The discovery response major version is unsupported.",
     discovery_api_version: "The Server API major version is unsupported.",
+    operation_feature_missing:
+      "The Server does not declare the feature required for this operation. Check the supported Server build.",
+    operation_feature_version:
+      "The feature version required for this operation is unsupported. Check the Server build.",
+    operation_missing:
+      "The Server does not declare support for this operation. Other verified operations remain available.",
+    operation_qualification_required:
+      "The selected profile has no independent qualification for this operation. Check the Server build and profile verified for this operation.",
+    operation_unverified:
+      "This operation is unverified for this connection. Check Server support and the compatibility profile.",
     save: "Save configuration",
     check: "Check connection",
     activate: "Use this connection",
@@ -239,6 +262,8 @@ export const connectionMessages = {
     disconnect: "Disconnect Desktop",
     scope: "Select an exact scope",
     scopeQuery: "Find scopes by title",
+    scopeListUnavailable: "Scope search is unavailable",
+    scopeSelectUnavailable: "Scope selection is unavailable",
     find: "Find scopes",
     more: "Next page",
     empty: "No accessible scopes on this page.",
@@ -316,6 +341,30 @@ export function discoveryMessage(
   ]
     .filter(Boolean)
     .join(" ");
+}
+
+export function operationRestriction(
+  report: CheckReport | undefined,
+  operation: keyof typeof operations,
+  language: "zh" | "en",
+): string | null {
+  if (operationSupported(report, operation)) return null;
+  const text = connectionMessages[language];
+  const reason = report?.discovery?.operations[operation]?.reason;
+  switch (reason) {
+    case "feature_missing":
+      return text.operation_feature_missing;
+    case "feature_version":
+      return text.operation_feature_version;
+    case "operation_missing":
+      return text.operation_missing;
+    case "qualification_required":
+      return text.operation_qualification_required;
+    default:
+      return report?.discovery && report.discovery.status !== "supported"
+        ? discoveryMessage(report.discovery, language)
+        : text.operation_unverified;
+  }
 }
 
 export function connectionErrorCode(error: unknown): string | null {
