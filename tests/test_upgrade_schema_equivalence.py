@@ -14,6 +14,7 @@
 
 """Prevent schema equivalence from erasing differences in SQL literals."""
 
+import json
 import sqlite3
 
 import pytest
@@ -82,3 +83,15 @@ def test_unquoted_identifier_boundaries_are_preserved(name):
             )
     assert columns[0] != columns[1]
     assert inventories[0] != inventories[1]
+
+
+@pytest.mark.parametrize("kind", ["logical_tables", "views", "triggers"])
+def test_native_logical_schema_preserves_object_differences(kind):
+    left = {
+        "logical_tables": {"example": {"default": "a  b"}},
+        "views": {"example_view": "SELECT 'a  b'"},
+        "triggers": {"example_trigger": ["INSERT", "example", "SET NEW.value = 'a  b'"]},
+    }
+    right = json.loads(json.dumps(left).replace("a  b", "a b"))
+    changed = {**left, kind: right[kind]}
+    assert canonical_schema(left) != canonical_schema(changed)

@@ -130,11 +130,20 @@ installation pins are synchronized.
 ### Database upgrade support
 
 `release/upgrade-support.json` declares the target version, source-version selection policy, backends, and
-configurations. `automatic_sources` pins `source_version: "1.3.0"` with the `fixed-version` strategy and expands it
-across SQLite, embedded seekDB, and OceanBase. The target is the actual wheel built by CI. Future releases such as
-1.4.1 and 1.5.0 continue testing from 1.3.0 automatically; intermediate releases are not added as sources. Source
-wheel URLs and SHA-256s are resolved from public PyPI and recorded with the target artifact. This fixed baseline
-alone does not certify databases created/populated by other releases; use explicit cases for additional claims.
+configurations. `automatic_sources` keeps 1.3.0 as its fixed baseline; explicit `cases` are empty.
+The gate requires twelve cases: one source × three backends × vectors enabled/disabled × Code enabled/disabled.
+The target is always the actual wheel built by CI. Future target releases keep testing 1.3.0;
+intervening releases are not added automatically. The registered 1.4.0 bridge remains implemented but is outside
+CI upgrade acceptance, so a passing gate does not certify its upgrade path. Source wheel URLs and SHA-256s are resolved
+from public PyPI and recorded with the target artifact.
+
+The source-specific chains are `s1300 → s1400 → s1401 → s1402` for 1.3.0 and
+`r1400 → s1400 → s1401 → s1402` for 1.4.0. They share the target contract while preserving their frozen execution
+history and journal lineage for subsequent registered upgrades. Application versions do not identify schema
+checkpoints. In particular, 1.4.0 already has current Candidate envelopes: its bridge preserves those records and
+creates empty retained tables for the common target shape, without inventing old Candidate history. Adding other
+sources requires exact captures, a registered bridge and actual acceptance; the two registered paths do not certify
+all releases between them or the target.
 The current `upgrade-required` policy mandates positive acceptance on all three backends while keeping upgrade
 support unverified. Every profile points to `tests/release_upgrades/test_full_server.py`; missing migration support
 must fail. Neither a fresh-install-only declaration nor correct rejection of an old database satisfies this gate.
@@ -155,8 +164,6 @@ make upgrade-release-test
 uv run python scripts/run_upgrade_release_gate.py --release --release-notes /path/to/release-notes.md
 ```
 
-Full installed-release acceptance requires Linux process ownership and cleanup. Run it on Linux or in the GitHub Actions upgrade job; other hosts can run the policy and publication regression checks.
-
 The publication input directory must contain exactly one wheel and one matching `.tar.gz` source distribution;
 leftover distributions and unexpected files fail validation (`uv`'s `.gitignore` is not an artifact). The runner checks
 source metadata and builds a wheel from the source archive, comparing all member contents except the derived
@@ -176,7 +183,7 @@ policy validation alone does not establish an upgrade path. Ordinary PR builds m
 version; the `--release` check must run against the final tagged wheel without overriding its version.
 
 The **Upgrade release gate** CI job requires successful public migration commands, full Server readiness, target
-startup, preserved records and new writes on real 1.3.0 databases. Limited bundle verification with
+startup, preserved records and new writes on real 1.3.0 databases in all twelve declared cases. Limited bundle verification with
 `server_ready=false` fails. Every backend runs even if another backend fails, with separate logs and results.
 seekDB runs embedded in a temporary runner directory. PR and publication jobs start a disposable OceanBase CE
 container, wait for its MySQL tenant, archive diagnostics, and remove it even on failure. No external database

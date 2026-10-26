@@ -21,11 +21,14 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 import zipfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from email.parser import Parser
 from pathlib import Path
 from typing import Any
@@ -45,17 +48,20 @@ MANAGED_INPUTS = (
 PHASES = frozenset({
     "test_source_release_database",
     "test_public_migration_commands",
+    "test_legacy_startup_is_rejected",
+    "test_repeated_migration",
     "test_target_startup",
     "test_read_write_and_retrieval",
     "test_authorization",
     "test_candidates_and_processing",
+    "test_background_processing",
     "test_preserved_history_and_cursors",
     "test_fresh_upgrade_equivalence",
 })
 VERSION = r"\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?"
 NOTICE = {
-    "en": "Upgrades from 1.3.0 require passing full Server acceptance on SQLite, seekDB and OceanBase. This migration path is not yet verified; do not upgrade existing databases.",
-    "zh": "1.3.0 升级必须通过 SQLite、seekDB 和 OceanBase 的完整 Server 验收。当前迁移路径尚未验证，请勿升级已有数据库。",  # noqa: RUF001 -- Chinese prose
+    "en": "Upgrades from 1.3.0 and 1.4.0 require passing full Server acceptance on SQLite, seekDB and OceanBase. These migration paths are not yet verified; do not upgrade existing databases.",
+    "zh": "1.3.0 和 1.4.0 升级必须通过 SQLite、seekDB 和 OceanBase 的完整 Server 验收。当前迁移路径尚未验证，请勿升级已有数据库。",  # noqa: RUF001 -- Chinese prose
 }
 
 
@@ -161,6 +167,12 @@ def load_policy(root: Path) -> dict[str, Any]:
     return policy
 
 
+def manual_upgrade_case(case: dict[str, Any]) -> bool:
+    # Temporary embedded-engine waiver: keep both Code configurations available
+    # for manual diagnostics, but do not claim accepted upgrade support for them.
+    return case["backend"] == "seekdb" and case["configuration"] in {"full-server-code", "full-server-vector-code"}
+
+
 def support_text(policy: dict[str, Any], language: str) -> str:
     if policy["mode"] == "upgrade-required":
         return NOTICE[language]
@@ -173,11 +185,13 @@ def support_text(policy: dict[str, Any], language: str) -> str:
     lines.extend(
         f"| {case['source_version']} | {policy['target_version']} | {case['backend']} | {case['configuration']} |"
         for case in policy["cases"]
+        if not manual_upgrade_case(case)
     )
     if automatic := policy["automatic_sources"]:
         lines.extend(
             f"| {automatic['source_version']} | {policy['target_version']} | {profile['backend']} | {profile['configuration']} |"
             for profile in automatic["profiles"]
+            if not manual_upgrade_case(profile)
         )
     return "\n".join(lines)
 
@@ -206,7 +220,7 @@ def validate_junit(report: Path) -> None:
     require(names >= PHASES, f"Missing full Server acceptance phases: {sorted(PHASES - names)}")
 
 
-def validate_backend_evidence(path: Path, backend: str, configuration: str) -> dict[str, Any]:
+def validate_backend_evidence(path: Path, backend: str) -> dict[str, Any]:
     evidence = json.loads(path.read_text(encoding="utf-8"))
     require(evidence.get("backend") == backend, "Backend evidence does not match the declared case")
     for key in ("engine_version", "driver_version", "source_schema", "target_schema", "fresh_schema"):
@@ -217,7 +231,6 @@ def validate_backend_evidence(path: Path, backend: str, configuration: str) -> d
             isinstance(evidence.get("proxy_version"), str) and evidence["proxy_version"],
             "Record proxy version or direct",
         )
-    require(evidence.get("configuration") == configuration, "Configuration evidence differs from the declared case")
     return evidence
 
 
@@ -302,6 +315,80 @@ def wheel_version(wheel: Path) -> str:
     return str(metadata["Version"])
 
 
+def _preserve_seekdb_logs(directory: Path, output: Path) -> None:
+    """Retain bounded diagnostics from synthetic acceptance stores, excluding database files."""
+
+    remaining = 16 * 1024 * 1024
+    files = []
+    # Preserve the existing revision journal before native logs can use the budget.
+    paths = [
+        path
+        for name in ("database", "fresh")
+        for path in sorted((directory / f"{name}.pc-migration-state").glob("*/maintenance.json"))
+    ]
+    paths += [path for name in ("database", "fresh") for path in sorted((directory / name).rglob("*.log*"))]
+    with zipfile.ZipFile(output / "seekdb-native-logs.zip", "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for path in paths:
+            if remaining == 0:
+                break
+            if path.is_symlink() or not path.is_file():
+                continue
+            relative = path.relative_to(directory).as_posix()
+            segments = []
+            captured = 0
+            with path.open("rb") as source:
+                size = source.seek(0, os.SEEK_END)
+                length = min(size, 4 * 1024 * 1024, remaining)
+                if length < size:
+                    head = length // 2
+                    ranges = [
+                        (f"head/{relative}", 0, head),
+                        (f"tail/{relative}", size - (length - head), length - head),
+                    ]
+                else:
+                    ranges = [(relative, 0, length)]
+                for entry, offset, count in ranges:
+                    if count == 0 and size:
+                        continue
+                    source.seek(offset)
+                    content = source.read(count)
+                    archive.writestr(entry, content)
+                    remaining -= len(content)
+                    captured += len(content)
+                    segments.append({"path": entry, "offset_bytes": offset, "captured_bytes": len(content)})
+            files.append({
+                "path": relative,
+                "size_bytes": size,
+                "captured_bytes": captured,
+                "truncated": captured < size,
+                "segments": segments,
+            })
+    usage = shutil.disk_usage(directory)
+    manifest = {
+        "files": files,
+        "budget_exhausted": remaining == 0,
+        "filesystem": {"total_bytes": usage.total, "used_bytes": usage.used, "free_bytes": usage.free},
+    }
+    (output / "seekdb-native-logs.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+
+@contextmanager
+def case_workspace(backend: str, output: Path) -> Iterator[Path]:
+    # Keep embedded sockets under a short private path. Native logs must leave
+    # this directory before cleanup, including when acceptance raises or times out.
+    with tempfile.TemporaryDirectory(prefix="pc-up-", dir="/tmp" if os.name != "nt" else None) as temporary:  # noqa: S108 -- private mkdtemp directory
+        directory = Path(temporary)
+        try:
+            yield directory
+        finally:
+            if backend == "seekdb":
+                try:
+                    _preserve_seekdb_logs(directory, output)
+                except OSError as error:
+                    # Diagnostics must not replace the acceptance failure.
+                    print(f"seekDB native log collection failed: {type(error).__name__}", file=sys.stderr)
+
+
 def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dict[str, Any]:
     require(sys.platform == "linux", "Installed-release acceptance requires Linux process ownership and cleanup")
     output.mkdir(parents=True, exist_ok=False)
@@ -311,9 +398,10 @@ def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dic
         for key, value in os.environ.items()
         if not key.startswith(("POWERCONTEXT_", "PYTEST_")) and key not in {"PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"}
     }
-    with tempfile.TemporaryDirectory(prefix="pc-up-", dir="/tmp" if os.name != "nt" else None) as temporary:  # noqa: S108 -- private mkdtemp directory; short embedded socket path
-        directory = Path(temporary)
+    with case_workspace(case["backend"], output) as directory:
         extras = "cli,server,seekdb" if case["backend"] == "seekdb" else "cli,server"
+        if case["configuration"] in {"full-server-code", "full-server-vector-code"}:
+            extras += ",code"
         interpreters = {}
         artifact = case["source_artifact"]
         packages = {
@@ -374,12 +462,49 @@ def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dic
             cwd=directory,
             log=output / "acceptance.log",
         )
-        validate_junit(report)
-        backend = validate_backend_evidence(output / "backend.json", case["backend"], case["configuration"])
+        backend = validate_case_output(case, output)
         return {"case": case, "installed": metadata, "database": backend, "status": "passed"}
 
 
-def gate(root: Path, wheel: Path, output: Path, *, release: bool = False, release_notes: str | None = None) -> None:
+def validate_case_output(case: dict[str, Any], output: Path) -> dict[str, Any]:
+    validate_junit(output / "junit.xml")
+    backend = validate_backend_evidence(output / "backend.json", case["backend"])
+    require(backend.get("configuration") == case["configuration"], "Configuration evidence differs from the case")
+    if case["configuration"] in {"full-server-code", "full-server-vector-code"}:
+        code = backend.get("code")
+        if not isinstance(code, dict):
+            raise GateError("Installed Code acceptance evidence required")  # noqa: TRY003 -- operator diagnostic
+        require(
+            re.fullmatch(r"[0-9a-f]{64}", str(code.get("fingerprint", "")))
+            and all(
+                code.get(field) is True
+                for field in ("immutable_cache_files_preserved", "symbol_ids_preserved", "server_query_ready")
+            ),
+            "The installed Code index must remain queryable with its original immutable identity",
+        )
+    if case["configuration"] in {"full-server-vector", "full-server-vector-code"}:
+        vectors = backend.get("vectors")
+        if not isinstance(vectors, dict):
+            raise GateError("Installed vector acceptance evidence required")  # noqa: TRY003 -- operator diagnostic
+        require(
+            vectors.get("dimension") == (4 if case["configuration"].endswith("-code") else 3)
+            and vectors.get("maintenance_embedding_requests") == 0
+            and all(
+                vectors.get(field) is True
+                for field in (
+                    "historical_atomic_and_topic_embeddings_preserved",
+                    "historical_and_new_vector_reads",
+                    "fresh_vector_read",
+                    "profile_drift_rejected",
+                )
+            )
+            and (case["backend"] != "sqlite" or vectors.get("missing_sqlite_helper_rejected") is True),
+            "Installed vector acceptance must preserve and retrieve the original embedding space",
+        )
+    return backend
+
+
+def validate_target(root: Path, wheel: Path, *, release: bool, release_notes: str | None) -> dict[str, Any]:
     policy = load_policy(root)
     check_docs(root, policy)
     actual_version = wheel_version(wheel)
@@ -390,6 +515,12 @@ def gate(root: Path, wheel: Path, output: Path, *, release: bool = False, releas
             support_text(policy, "en") in (release_notes or ""),
             "GitHub Release notes must include the exact upgrade support declaration",
         )
+    return policy
+
+
+def gate(root: Path, wheel: Path, output: Path, *, release: bool = False, release_notes: str | None = None) -> None:
+    policy = validate_target(root, wheel, release=release, release_notes=release_notes)
+    actual_version = wheel_version(wheel)
     # A fresh output directory prevents accepting stale reports from another build.
     output.mkdir(parents=True, exist_ok=False)
     evidence: dict[str, Any] = {
@@ -405,7 +536,11 @@ def gate(root: Path, wheel: Path, output: Path, *, release: bool = False, releas
         evidence["resolved_matrix"] = matrix
         require(matrix["required_cases"], "No required upgrade acceptance cases")
         failures = []
-        for index, case in enumerate(matrix["required_cases"]):
+        evidence["deferred_cases"] = [case for case in matrix["required_cases"] if manual_upgrade_case(case)]
+        evidence["complete"] = not evidence["deferred_cases"]
+        required = [case for case in matrix["required_cases"] if not manual_upgrade_case(case)]
+        require(required, "No required automatic upgrade cases")
+        for index, case in enumerate(required):
             try:
                 evidence["cases"].append(run_case(root, wheel, case, output / f"case-{index}"))
             except (GateError, OSError, ValueError, subprocess.SubprocessError, ElementTree.ParseError) as error:
@@ -419,7 +554,7 @@ def gate(root: Path, wheel: Path, output: Path, *, release: bool = False, releas
                 policy["mode"] == "supported-upgrades",
                 "Upgrade acceptance passed; update the reviewed support declaration before publication",
             )
-        evidence["status"] = "passed"
+        evidence["status"] = "passed" if evidence["complete"] else "selected-cases-passed"
     finally:
         (output / "result.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 

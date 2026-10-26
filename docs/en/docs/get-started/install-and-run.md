@@ -1,6 +1,6 @@
 ---
 title: Install and run
-description: Install PowerContext 1.4.0 and run the local Server.
+description: Install PowerContext 1.4.1 and run the local Server.
 ---
 
 # Install and run
@@ -24,12 +24,12 @@ Embedded seekDB is unavailable on Windows.
 
 ## Choose a version
 
-These instructions use PowerContext 1.4.0. Keep the package and Agent integration on
-the same version: package `1.4.0` and Git tag `powercontext-v1.4.0`.
+These instructions use PowerContext 1.4.1. Keep the package and Agent integration on
+the same version: package `1.4.1` and Git tag `powercontext-v1.4.1`.
 
 ```bash
-uv tool install --force "powercontext[cli,server]==1.4.0"
-powercontext setup codex --ref powercontext-v1.4.0
+uv tool install --force "powercontext[cli,server]==1.4.1"
+powercontext setup codex --ref powercontext-v1.4.1
 ```
 
 Check the [capability matrix](../integrations/capabilities.md) for host support and maintenance status.
@@ -41,13 +41,13 @@ You need Python 3.11 or newer, Git, and [`uv`](https://docs.astral.sh/uv/) on ma
 PowerContext from PyPI:
 
 ```bash
-uv tool install --force "powercontext[cli,server]==1.4.0"
+uv tool install --force "powercontext[cli,server]==1.4.1"
 ```
 
 For a source installation of the same version:
 
 ```bash
-uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@powercontext-v1.4.0"
+uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@powercontext-v1.4.1"
 ```
 
 For a machine that only connects to a remote Server, the `cli` extra includes `setup`, `doctor`, and remote content
@@ -126,7 +126,7 @@ Embedded seekDB is available on Linux and macOS when a compatible `pylibseekdb` 
 support this embedded backend. Install or replace the tool with the optional seekDB extra:
 
 ```bash
-uv tool install --force "powercontext[cli,server,seekdb]==1.4.0"
+uv tool install --force "powercontext[cli,server,seekdb]==1.4.1"
 ```
 
 When switching from SQLite, remove `POWERCONTEXT_SERVER_DATABASE_URL` from the Server process environment. An explicit
@@ -175,7 +175,7 @@ For a long-running process, Docker, authentication, or remote access, continue w
 ## Update or replace an installation
 
 <!-- upgrade-support:start -->
-Upgrades from 1.3.0 require passing full Server acceptance on SQLite, seekDB and OceanBase. This migration path is not yet verified; do not upgrade existing databases.
+Upgrades from 1.3.0 and 1.4.0 require passing full Server acceptance on SQLite, seekDB and OceanBase. These migration paths are not yet verified; do not upgrade existing databases.
 <!-- upgrade-support:end -->
 
 Keep existing deployments on their working version until their source version and backend have an accepted upgrade
@@ -190,15 +190,15 @@ The support declaration is checked against the release matrix and installed-arti
 Review the [Dream coordinated upgrade requirements](../workflows/review-dream-revisions.md#coordinated-upgrade)
 before upgrading an existing database. The unified Candidate routes replace `/v1/artifact-candidates/*` with
 `/v1/candidates/*` without aliases, and Dream Clients require contract 2. Existing Dream storage needs an explicit
-migration after unfinished runs have drained. The current unified migration bundle reports `server_ready=false`;
-it does not provide a complete production Server upgrade path. Atomic Memory verification alone does not establish
-that readiness. Do not bypass `migration_required` or `migration_framework_not_ready`.
+migration after unfinished runs have drained. [Full Server migration](../operate/database-migrations.md) requires
+`state=ready` and `server_ready=true`; partial Artifact or Atomic Memory verification cannot replace it. Do not bypass
+the migration gate.
 
-To install 1.4.0 in a separate environment for a fresh deployment:
+To install 1.4.1 in a separate environment for a fresh deployment:
 
 ```bash
 uv venv /path/to/powercontext-preview
-uv pip install --python /path/to/powercontext-preview/bin/python "powercontext[cli,server]==1.4.0"
+uv pip install --python /path/to/powercontext-preview/bin/python "powercontext[cli,server]==1.4.1"
 ```
 
 To install another Git ref in the separate environment:
@@ -216,7 +216,7 @@ On Windows, the virtual environment interpreter is at `Scripts/python.exe`.
 An application that imports the async Client SDK should add it to that application's environment:
 
 ```bash
-uv add "powercontext[client]==1.4.0"
+uv add "powercontext[client]==1.4.1"
 ```
 
 Use `builtin` for in-process Python composition, `server` for the service, `client` for the Python SDK, or `cli` for

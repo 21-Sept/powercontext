@@ -16,16 +16,18 @@
 
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 import zipfile
 from pathlib import Path
+from urllib.parse import urlsplit
 from xml.etree import ElementTree
 
+import parallel_upgrade_release_gate as parallel
 import pytest
 import upgrade_release_gate as gate
 import upgrade_release_matrix as matrix
@@ -33,6 +35,7 @@ import yaml
 from ci_legacy_upgrade_rejection import database_environment
 
 from powercontext.server.settings import ServerSettings
+from tests.release_upgrades.test_full_server import environment_for
 
 
 @pytest.fixture
@@ -225,7 +228,7 @@ def test_missing_backend_evidence_fails_even_with_a_passing_report(tmp_path):
     report = tmp_path / "backend.json"
     report.write_text(json.dumps({"backend": "oceanbase", "engine_version": "4.6.3"}))
     with pytest.raises(gate.GateError, match="driver_version"):
-        gate.validate_backend_evidence(report, "oceanbase", "full-server-no-vector")
+        gate.validate_backend_evidence(report, "oceanbase")
 
 
 def test_old_evidence_directory_cannot_be_reused(release):
@@ -280,6 +283,43 @@ def test_fixed_source_tracks_each_target_on_all_three_backends(release, monkeypa
     ]
     assert resolved["required_cases"] == resolved["candidate_cases"]
     assert all(case["source_artifact"]["sha256"] == "a" * 64 for case in resolved["candidate_cases"])
+
+
+@pytest.mark.parametrize("target", ["1.4.1", "1.5.0"])
+def test_reviewed_sources_each_require_every_backend_and_configuration(release, monkeypatch, target):
+    _, _, policy = release
+    profiles = [
+        {
+            "backend": backend,
+            "configuration": configuration,
+            "suite": "tests/release_upgrades/test_example.py",
+        }
+        for backend in ("sqlite", "seekdb", "oceanbase")
+        for configuration in (
+            "full-server-no-vector",
+            "full-server-code",
+            "full-server-vector",
+            "full-server-vector-code",
+        )
+    ]
+    policy["automatic_sources"]["profiles"] = profiles
+    policy["cases"] = [{"source_version": "1.4.0", **profile} for profile in profiles]
+    catalog = catalog_for("1.3.0", "1.4.0", "1.4.1", "1.5.0")
+    catalog["releases"]["1.4.0"][0]["digests"]["sha256"] = "b" * 64
+    monkeypatch.setattr(matrix, "fetch_catalog", lambda: catalog)
+    resolved = matrix.resolve_matrix(policy, target)
+    assert resolved["required_cases"] == resolved["candidate_cases"]
+    assert len(resolved["required_cases"]) == 24
+    assert {
+        (case["source_version"], case["backend"], case["configuration"]) for case in resolved["required_cases"]
+    } == {
+        (source, profile["backend"], profile["configuration"]) for source in ("1.3.0", "1.4.0") for profile in profiles
+    }
+    for case in resolved["required_cases"]:
+        assert case["source_artifact"]["sha256"] == {"1.3.0": "a" * 64, "1.4.0": "b" * 64}[case["source_version"]]
+    del catalog["releases"]["1.4.0"]
+    with pytest.raises(ValueError, match=r"1\.4\.0"):
+        matrix.resolve_matrix(policy, target)
 
 
 def test_newly_published_versions_do_not_change_the_fixed_source(release, monkeypatch):
@@ -376,43 +416,145 @@ def test_publishing_jobs_depend_on_nonoptional_preupload_upgrade_gate():
     root = Path(__file__).parents[1]
     workflow = yaml.safe_load((root / ".github/workflows/release.yml").read_text())
     build = workflow["jobs"]["release-build"]
-    steps = build["steps"]
-    index = next(i for i, step in enumerate(steps) if "run_upgrade_release_gate.py" in step.get("run", ""))
+    assert build["uses"] == "./.github/workflows/upgrade-release.yml"
+    assert build["with"]["release"] is True
+    assert build["with"]["selection"] == "automatic"
+    assert not build.get("continue-on-error")
+    shared = yaml.safe_load((root / ".github/workflows/upgrade-release.yml").read_text())["jobs"]
+    prepare = shared["prepare"]["steps"]
+    freeze = next(step for step in prepare if "parallel_upgrade_release_gate.py prepare" in step.get("run", ""))
+    assert "--release --release-event" in freeze["run"]
+    steps = shared["collect"]["steps"]
+    index = next(i for i, step in enumerate(steps) if "parallel_upgrade_release_gate.py collect" in step.get("run", ""))
     assert "if" not in steps[index] and not steps[index].get("continue-on-error")
-    assert "--release --release-event" in steps[index]["run"]
     upload = next(i for i, step in enumerate(steps) if step.get("with", {}).get("name") == "release-dists")
     assert index < upload
+    assert steps[upload]["if"] == "success() && inputs.release"
     assert steps[upload]["with"]["path"] == "${{ runner.temp }}/upgrade-release-evidence/validated-dist/*"
+    assert shared["collect"]["needs"] == ["prepare", "cases"]
+    assert any('test "$CASE_JOBS_RESULT" = success' in step.get("run", "") for step in steps)
     for name in ("pypi-publish", "release-assets"):
         assert workflow["jobs"][name]["needs"] == "release-build"
+    main = yaml.safe_load((root / ".github/workflows/master.yml").read_text())["jobs"]
+    assert main["upgrade-acceptance"]["uses"] == build["uses"]
+    verdict = main["upgrade-release-gate"]
+    assert verdict["name"] == "Upgrade release gate" and verdict["if"] == "always()"
+    assert verdict["needs"] == "upgrade-acceptance"
+    assert verdict["steps"][0]["run"] == 'test "$UPGRADE_RESULT" = success'
 
 
-def test_repository_baseline_covers_all_three_databases():
+@pytest.mark.parametrize(
+    "configuration", ["full-server-no-vector", "full-server-code", "full-server-vector", "full-server-vector-code"]
+)
+def test_repository_baseline_covers_all_three_databases(configuration, monkeypatch):
     policy = gate.load_policy(Path(__file__).parents[1])
     selection = policy["automatic_sources"]
     assert selection["strategy"] == "fixed-version"
     assert selection["source_version"] == "1.3.0"
     assert {profile["backend"] for profile in selection["profiles"]} == {"sqlite", "seekdb", "oceanbase"}
+    assert {profile["backend"] for profile in selection["profiles"] if profile["configuration"] == configuration} == {
+        "sqlite",
+        "seekdb",
+        "oceanbase",
+    }
+    monkeypatch.setattr(matrix, "fetch_catalog", lambda: catalog_for("1.3.0", "1.4.0", "1.4.1"))
+    resolved = matrix.resolve_matrix(policy, policy["target_version"])
+    assert len(resolved["required_cases"]) == 12
+    assert {case["source_version"] for case in resolved["required_cases"]} == {"1.3.0"}
+    assert {case["backend"] for case in resolved["required_cases"] if case["configuration"] == configuration} == {
+        "sqlite",
+        "seekdb",
+        "oceanbase",
+    }
 
 
-@pytest.mark.parametrize("workflow_name,job_name", [("master", "upgrade-release-gate"), ("release", "release-build")])
-def test_upgrade_jobs_require_real_backends_and_always_clean_up(workflow_name, job_name):
+def test_upgrade_cases_require_isolated_backends_and_always_clean_up():
     root = Path(__file__).parents[1]
-    workflow = yaml.safe_load((root / f".github/workflows/{workflow_name}.yml").read_text())
-    job = workflow["jobs"][job_name]
+    workflow = yaml.safe_load((root / ".github/workflows/upgrade-release.yml").read_text())
+    job = workflow["jobs"]["cases"]
+    assert job["needs"] == "prepare"
+    assert job["strategy"]["fail-fast"] is False
+    assert job["strategy"]["matrix"] == "${{ fromJSON(needs.prepare.outputs.matrix) }}"
     steps = job["steps"]
     setup_index = next(
         i for i, step in enumerate(steps) if step.get("uses") == "./.github/actions/setup-upgrade-oceanbase"
     )
-    gate_index = next(i for i, step in enumerate(steps) if "run_upgrade_release_gate.py" in step.get("run", ""))
+    gate_index = next(
+        i for i, step in enumerate(steps) if "parallel_upgrade_release_gate.py case" in step.get("run", "")
+    )
     assert setup_index < gate_index
-    for index in (setup_index, gate_index):
-        assert "if" not in steps[index] and not steps[index].get("continue-on-error")
+    assert steps[setup_index]["if"] == "matrix.backend == 'oceanbase'"
+    assert "if" not in steps[gate_index]
+    assert not any(step.get("continue-on-error") for step in steps)
     assert not any("ci_legacy_upgrade_rejection.py" in step.get("run", "") for step in steps)
     assert "/pc_upgrade_test?" in job["env"]["PC_UPGRADE_OCEANBASE_URL"]
     assert "/pc_upgrade_fresh?" in job["env"]["PC_UPGRADE_OCEANBASE_FRESH_URL"]
     cleanup = next(step for step in steps if "docker rm --force upgrade-oceanbase" in step.get("run", ""))
-    assert cleanup["if"] == "always()"
+    assert cleanup["if"] == "always() && matrix.backend == 'oceanbase'"
+
+
+def test_oceanbase_sources_and_profiles_use_separate_provisioned_databases(tmp_path, monkeypatch):
+    urls = {
+        "PC_UPGRADE_OCEANBASE_URL": "mysql+aoceanbase://root%40test:fixture@127.0.0.1:2881/pc_upgrade_test?charset=utf8mb4",
+        "PC_UPGRADE_OCEANBASE_FRESH_URL": "mysql+aoceanbase://root%40test:fixture@127.0.0.1:2881/pc_upgrade_fresh?charset=utf8mb4",
+    }
+    for key, value in urls.items():
+        monkeypatch.setenv(key, value)
+    action = yaml.safe_load(
+        (Path(__file__).parents[1] / ".github/actions/setup-upgrade-oceanbase/action.yml").read_text()
+    )
+    setup = action["runs"]["steps"][0]["run"]
+    provisioned = set(re.findall(r"CREATE DATABASE (pc_upgrade[a-z0-9_]*)", setup))
+    provisioned.update(re.findall(r"--env OB_DATABASE=(pc_upgrade[a-z0-9_]*)", setup))
+    selected = set()
+    for source in ("1.3.0", "1.4.0"):
+        for configuration in (
+            "full-server-no-vector",
+            "full-server-code",
+            "full-server-vector",
+            "full-server-vector-code",
+        ):
+            case = {
+                "source_version": source,
+                "backend": "oceanbase",
+                "configuration": configuration,
+                "code_enabled": configuration.endswith("-code"),
+                "vector_dimension": 0,
+                "model": {"url": "http://127.0.0.1:1/v1"},
+                "work": tmp_path,
+            }
+            for fresh in (False, True):
+                environment = environment_for(case, fresh=fresh)
+                selected_url = urlsplit(environment["POWERCONTEXT_SERVER_DATABASE_URL"])
+                assert selected_url.geturl() == environment["PC_UPGRADE_OCEANBASE_URL"]
+                assert selected_url.path not in selected, "Source/configuration cases must not reuse stored data"
+                assert selected_url.path.removeprefix("/") in provisioned
+                selected.add(selected_url.path)
+                original = urlsplit(urls["PC_UPGRADE_OCEANBASE_FRESH_URL" if fresh else "PC_UPGRADE_OCEANBASE_URL"])
+                assert selected_url._replace(path=original.path) == original
+    assert len(selected) == 16
+    assert {key: os.environ[key] for key in urls} == urls
+
+
+@pytest.mark.parametrize(
+    "database", ["production", "pc_upgrade_vector_test_deadbeef", "pc_upgrade_140_code_test_deadbeef"]
+)
+def test_oceanbase_source_adapter_rejects_other_databases(tmp_path, monkeypatch, database):
+    monkeypatch.setenv(
+        "PC_UPGRADE_OCEANBASE_URL",
+        f"mysql+aoceanbase://root%40test:fixture@127.0.0.1:2881/{database}?charset=utf8mb4",
+    )
+    case = {
+        "source_version": "1.4.0",
+        "backend": "oceanbase",
+        "configuration": "full-server-vector",
+        "code_enabled": False,
+        "vector_dimension": 3,
+        "model": {"url": "http://127.0.0.1:1/v1"},
+        "work": tmp_path,
+    }
+    with pytest.raises(AssertionError, match="dedicated disposable"):
+        environment_for(case)
 
 
 def test_oceanbase_fixture_selects_the_oceanbase_server_profile(tmp_path, monkeypatch):
@@ -464,6 +606,105 @@ def test_failed_backend_does_not_skip_other_required_backends(release, monkeypat
     assert [case["status"] for case in result["cases"]] == ["failed", "passed", "passed"]
 
 
+def test_failed_seekdb_acceptance_keeps_native_logs_before_workspace_cleanup(tmp_path):
+    output = tmp_path / "evidence"
+    output.mkdir()
+    journal = b'{"state":"active","last_revision":"s1300","pending_revision":"s1400"}'
+    maintenance = "database.pc-migration-state/disposable-database/maintenance.json"
+    fresh_maintenance = "fresh.pc-migration-state/disposable-fresh/maintenance.json"
+
+    with pytest.raises(gate.GateError, match="fixture migration failed"), gate.case_workspace("seekdb", output) as work:
+        native = work / "database/log"
+        native.mkdir(parents=True)
+        (native / "observer.log").write_bytes(b"native recovery diagnostic\n")
+        (work / "database/store").write_bytes(b"database payload must not become a log")
+        fresh = work / "fresh/log"
+        fresh.mkdir(parents=True)
+        (fresh / "observer.log.wf").write_bytes(b"fresh native diagnostic\n")
+        for relative in (maintenance, fresh_maintenance):
+            path = work / relative
+            path.parent.mkdir(parents=True)
+            path.write_bytes(journal)
+            (path.parent / "backup.data").write_bytes(b"backup payload must not be collected")
+        raise gate.GateError("fixture migration failed")  # noqa: TRY003 -- synthetic acceptance failure
+
+    assert not work.exists()
+    with zipfile.ZipFile(output / "seekdb-native-logs.zip") as archive:
+        assert set(archive.namelist()) == {
+            "database/log/observer.log",
+            "fresh/log/observer.log.wf",
+            maintenance,
+            fresh_maintenance,
+        }
+        assert archive.read("database/log/observer.log") == b"native recovery diagnostic\n"
+        assert archive.read("fresh/log/observer.log.wf") == b"fresh native diagnostic\n"
+        assert archive.read(maintenance) == journal
+        assert archive.read(fresh_maintenance) == journal
+    manifest = json.loads((output / "seekdb-native-logs.json").read_text())
+    assert len(manifest["files"]) == 4
+    assert not any(item["truncated"] for item in manifest["files"])
+
+
+def test_seekdb_diagnostics_failure_preserves_acceptance_failure(tmp_path, capsys):
+    with (
+        pytest.raises(gate.GateError, match="fixture migration failed"),
+        gate.case_workspace("seekdb", tmp_path / "missing-output") as work,
+    ):
+        raise gate.GateError("fixture migration failed")  # noqa: TRY003 -- synthetic acceptance failure
+
+    assert not work.exists()
+    assert "seekDB native log collection failed: FileNotFoundError" in capsys.readouterr().err
+
+
+def test_seekdb_diagnostics_keep_bounded_head_and_tail_of_large_native_logs(tmp_path):
+    output = tmp_path / "evidence"
+    output.mkdir()
+    content = b"initial DDL diagnostic\n" + b"x" * (5 * 1024 * 1024) + b"final wait diagnostic\n"
+    with gate.case_workspace("seekdb", output) as work:
+        native = work / "database/log"
+        native.mkdir(parents=True)
+        (native / "observer.log").write_bytes(content)
+
+    with zipfile.ZipFile(output / "seekdb-native-logs.zip") as archive:
+        head = archive.read("head/database/log/observer.log")
+        tail = archive.read("tail/database/log/observer.log")
+        assert len(head) + len(tail) <= 4 * 1024 * 1024
+        assert head.startswith(b"initial DDL diagnostic\n")
+        assert tail.endswith(b"final wait diagnostic\n")
+        manifest = json.loads((output / "seekdb-native-logs.json").read_text())
+        record = manifest["files"][0]
+        assert record["truncated"] is True
+        assert record["size_bytes"] == len(content)
+        assert record["captured_bytes"] == len(head) + len(tail)
+        for segment in record["segments"]:
+            start = segment["offset_bytes"]
+            assert archive.read(segment["path"]) == content[start : start + segment["captured_bytes"]]
+
+
+def test_seekdb_diagnostics_share_one_budget_with_maintenance_evidence(tmp_path):
+    output = tmp_path / "evidence"
+    output.mkdir()
+    maintenance = "database.pc-migration-state/disposable-database/maintenance.json"
+    journal = b'{"state":"active","pending_revision":"s1400"}'
+    with gate.case_workspace("seekdb", output) as work:
+        path = work / maintenance
+        path.parent.mkdir(parents=True)
+        path.write_bytes(journal)
+        for store in ("database", "fresh"):
+            native = work / store / "log"
+            native.mkdir(parents=True)
+            for number in range(3):
+                (native / f"observer.log.{number}").write_bytes(b"x" * (5 * 1024 * 1024))
+
+    manifest = json.loads((output / "seekdb-native-logs.json").read_text())
+    with zipfile.ZipFile(output / "seekdb-native-logs.zip") as archive:
+        assert archive.read(maintenance) == journal
+        captured = sum(entry.file_size for entry in archive.infolist())
+        assert captured <= 16 * 1024 * 1024
+        assert captured == sum(record["captured_bytes"] for record in manifest["files"])
+    assert manifest["budget_exhausted"] is True
+
+
 @pytest.mark.parametrize(
     "relative",
     [
@@ -500,6 +741,7 @@ def test_artifact_hashes_do_not_normalize_bytes(tmp_path):
 _PROCESS_FIXTURE = """
 import os, signal, subprocess, sys, time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 role, mode, control, evidence = sys.argv[1:]
 control, evidence = Path(control), Path(evidence)
@@ -552,8 +794,7 @@ def test_upgrade_command_reaps_detached_descendants_before_workspace_cleanup(tmp
     # This child belongs to the test, not the isolated command supervisor.
     sentinel = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     try:
-        with tempfile.TemporaryDirectory(dir=tmp_path) as directory:
-            work = Path(directory)
+        with gate.case_workspace("sqlite", report) as work:
             arguments = [sys.executable, str(fixture), "root", mode, str(control), str(report)]
             options = {
                 "environment": dict(os.environ),
@@ -601,9 +842,7 @@ def test_upgrade_command_owner_finishes_cleanup_after_gate_cancellation(tmp_path
         f"sys.path[:0] = {[str(Path(gate.__file__).parent), str(Path(matrix.__file__).parent)]!r}\n"
         "import upgrade_release_gate as gate\n"
         f"report = Path({str(report)!r})\n"
-        "from tempfile import TemporaryDirectory\n"
-        "with TemporaryDirectory() as directory:\n"
-        "    work = Path(directory)\n"
+        "with gate.case_workspace('sqlite', report) as work:\n"
         "    (report / 'workspace').write_text(str(work))\n"
         f"    gate.run_owned({[sys.executable, str(fixture), 'root', 'forced-timeout', str(control), str(report)]!r}, "
         "environment=dict(os.environ), cwd=work, log=report / 'command.log', timeout=60, shutdown_timeout=0.5)\n"
@@ -656,8 +895,320 @@ def _process_exists(pid):
     return True
 
 
-@pytest.mark.parametrize("configuration", ["full-server-vector", "full-server-code", "full-server-vector-code", "typo"])
-def test_unimplemented_configuration_fails_before_opening_database(tmp_path, configuration):
+@pytest.fixture
+def parallel_reports(release, monkeypatch, request):
+    root, wheel, policy = release
+    selection = getattr(request, "param", "full")
+    if hasattr(request, "param"):
+        policy["automatic_sources"]["profiles"] = [
+            {"backend": backend, "configuration": configuration, "suite": "tests/release_upgrades/test_example.py"}
+            for backend in ("sqlite", "seekdb", "oceanbase")
+            for configuration in (
+                "full-server-no-vector",
+                "full-server-vector",
+                "full-server-code",
+                "full-server-vector-code",
+            )
+        ]
+        policy["mode"] = "supported-upgrades"
+        parallel.write_json(root / gate.MANIFEST, policy)
+        gate.check_docs(root, policy, write=True)
+    dist = root / "dist"
+    dist.mkdir()
+    shutil.copyfile(wheel, dist / wheel.name)
+    prepared = root / "prepared"
+    scheduled = parallel.prepare(root, dist, prepared, release=False, release_notes=None, selection=selection)
+    executed = []
+
+    def execute(_root, tested_wheel, case, output):
+        executed.append(case)
+        assert gate.sha256(tested_wheel) == gate.sha256(wheel)
+        output.mkdir()
+        installed = {"source": {"powercontext": case["source_version"]}, "target": {"powercontext": "2.0.0"}}
+        backend = {
+            "backend": case["backend"],
+            "configuration": case["configuration"],
+            "engine_version": "fixture",
+            "driver_version": "fixture",
+            "source_schema": "source",
+            "target_schema": "target",
+            "fresh_schema": "fresh",
+            "tenant_mode": "mysql",
+            "proxy_version": "direct",
+        }
+        if case["configuration"] in {"full-server-code", "full-server-vector-code"}:
+            backend["code"] = {
+                "fingerprint": "a" * 64,
+                "immutable_cache_files_preserved": True,
+                "symbol_ids_preserved": True,
+                "server_query_ready": True,
+            }
+        if case["configuration"] in {"full-server-vector", "full-server-vector-code"}:
+            backend["vectors"] = {
+                "dimension": 4 if case["configuration"].endswith("-code") else 3,
+                "maintenance_embedding_requests": 0,
+                "historical_atomic_and_topic_embeddings_preserved": True,
+                "historical_and_new_vector_reads": True,
+                "fresh_vector_read": True,
+                "profile_drift_rejected": True,
+                "missing_sqlite_helper_rejected": True,
+            }
+        parallel.write_json(output / "installed.json", installed)
+        parallel.write_json(output / "backend.json", backend)
+        tree = ElementTree.Element("testsuite")
+        for phase in gate.PHASES:
+            ElementTree.SubElement(tree, "testcase", name=phase)
+        ElementTree.ElementTree(tree).write(output / "junit.xml")
+        return {"case": case, "status": "passed", "installed": installed, "database": backend}
+
+    monkeypatch.setattr(gate, "run_case", execute)
+    # Source discovery must not recur on independent workers or during collection.
+    monkeypatch.setattr(matrix, "fetch_catalog", lambda: pytest.fail("Catalog resolved twice"))
+    reports = root / "reports"
+    for entry in reversed(scheduled["include"]):
+        parallel.execute_case(root, prepared, entry["index"], reports / f"case-{entry['index']}")
+    assert len(executed) == len(scheduled["include"])
+    assert len({(case["source_version"], case["backend"], case["configuration"]) for case in executed}) == len(executed)
+    return root, prepared, reports, policy
+
+
+def test_parallel_collection_accepts_each_case_once_and_keeps_exact_artifacts(parallel_reports):
+    root, prepared, reports, _ = parallel_reports
+    accepted = parallel.collect(root, prepared, reports, root / "accepted")
+    plan = json.loads((prepared / "plan.json").read_text())
+    assert {path.name: gate.sha256(path) for path in accepted} == plan["artifacts"]
+    verdict = json.loads((root / "accepted/result.json").read_text())
+    assert verdict["status"] == "passed"
+    assert [result["case"] for result in verdict["cases"]] == plan["resolved_matrix"]["required_cases"]
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        "missing",
+        "duplicate",
+        "stale",
+        "failed",
+        "wrong-case",
+        "skipped",
+        "missing-phase",
+        "installed",
+        "backend",
+        "artifact",
+    ],
+)
+def test_parallel_collection_rejects_incomplete_or_mixed_evidence(parallel_reports, broken):
+    root, prepared, reports, _ = parallel_reports
+    path = reports / "case-0/result.json"
+    result = json.loads(path.read_text())
+    if broken == "missing":
+        path.unlink()
+    elif broken == "duplicate":
+        another = reports / "case-1/result.json"
+        parallel.write_json(another, result)
+    elif broken == "stale":
+        result["plan_sha256"] = "0" * 64
+        parallel.write_json(path, result)
+    elif broken == "failed":
+        result["status"] = "failed"
+        parallel.write_json(path, result)
+    elif broken == "wrong-case":
+        result["result"]["case"]["configuration"] = "different-profile"
+        parallel.write_json(path, result)
+    elif broken in {"skipped", "missing-phase"}:
+        report = path.parent / "acceptance/junit.xml"
+        tree = ElementTree.parse(report)  # noqa: S314 -- disposable locally generated test report
+        if broken == "skipped":
+            ElementTree.SubElement(next(tree.iter("testcase")), "skipped")
+        else:
+            tree.getroot().remove(next(tree.iter("testcase")))
+        tree.write(report)
+    elif broken == "installed":
+        parallel.write_json(path.parent / "acceptance/installed.json", {"target": {"powercontext": "old"}})
+    elif broken == "backend":
+        parallel.write_json(path.parent / "acceptance/backend.json", {"backend": "sqlite"})
+    else:
+        wheel = next((prepared / "inputs").glob("*.whl"))
+        wheel.write_bytes(b"a different build")
+    with pytest.raises(gate.GateError):
+        parallel.collect(root, prepared, reports, root / "accepted")
+    assert not (root / "accepted/validated-dist").exists()
+
+
+def test_parallel_workers_reject_another_run(parallel_reports, monkeypatch):
+    root, prepared, reports, _ = parallel_reports
+    monkeypatch.setenv("GITHUB_RUN_ID", "another-run")
+    with pytest.raises(gate.GateError, match="another workflow"):
+        parallel.collect(root, prepared, reports, root / "accepted")
+
+
+def test_parallel_failed_case_still_records_failure_and_allows_other_workers(release, monkeypatch):
+    root, wheel, _ = release
+    dist = root / "dist"
+    dist.mkdir()
+    shutil.copyfile(wheel, dist / wheel.name)
+    prepared = root / "prepared"
+    parallel.prepare(root, dist, prepared, release=False, release_notes=None)
+
+    def fail(*_args):
+        raise gate.GateError("migration_required")
+
+    monkeypatch.setattr(gate, "run_case", fail)
+    with pytest.raises(gate.GateError, match="migration_required"):
+        parallel.execute_case(root, prepared, 0, root / "reports/case-0")
+    assert json.loads((root / "reports/case-0/result.json").read_text())["status"] == "failed"
+    monkeypatch.setattr(gate, "run_case", lambda *_args: {"status": "passed"})
+    parallel.execute_case(root, prepared, 1, root / "reports/case-1")
+    assert json.loads((root / "reports/case-1/result.json").read_text())["status"] == "passed"
+
+
+@pytest.mark.parametrize("changed", ["policy", "checkout", "matrix"])
+def test_parallel_workers_reject_changed_preparation_inputs(parallel_reports, monkeypatch, changed):
+    root, prepared, _reports, policy = parallel_reports
+    if changed == "policy":
+        policy["schema_review"]["rationale"] += " Changed review."
+        parallel.write_json(root / gate.MANIFEST, policy)
+    elif changed == "checkout":
+        monkeypatch.setenv("GITHUB_SHA", "another-commit")
+    else:
+        plan = json.loads((prepared / "plan.json").read_text())
+        plan["resolved_matrix"]["required_cases"].pop()
+        parallel.write_json(prepared / "plan.json", plan)
+    with pytest.raises(gate.GateError):
+        parallel.execute_case(root, prepared, 0, root / "another-case")
+    assert not (root / "another-case").exists()
+
+
+def test_parallel_passes_do_not_override_unreviewed_release_support(parallel_reports):
+    root, prepared, reports, policy = parallel_reports
+    # Model the release preparation metadata; distribution validation itself is
+    # exercised with real sdist rebuilds in test_upgrade_publication.py.
+    plan = json.loads((prepared / "plan.json").read_text())
+    plan["release"] = True
+    plan["release_notes"] = gate.support_text(policy, "en")
+    parallel.write_json(prepared / "plan.json", plan)
+    for path in reports.glob("*/result.json"):
+        result = json.loads(path.read_text())
+        result["plan_sha256"] = gate.sha256(prepared / "plan.json")
+        parallel.write_json(path, result)
+    with pytest.raises(gate.GateError, match="support declaration"):
+        parallel.collect(root, prepared, reports, root / "accepted")
+    assert not (root / "accepted/validated-dist").exists()
+
+
+def test_parallel_worker_rejects_artifact_changed_during_execution(release, monkeypatch):
+    root, wheel, _ = release
+    dist = root / "dist"
+    dist.mkdir()
+    shutil.copyfile(wheel, dist / wheel.name)
+    prepared = root / "prepared"
+    parallel.prepare(root, dist, prepared, release=False, release_notes=None)
+
+    def replace_wheel(_root, tested_wheel, _case, _output):
+        tested_wheel.write_bytes(b"replaced while acceptance ran")
+        return {"status": "passed"}
+
+    monkeypatch.setattr(gate, "run_case", replace_wheel)
+    with pytest.raises(gate.GateError, match="distributions changed"):
+        parallel.execute_case(root, prepared, 0, root / "reports/case-0")
+    assert json.loads((root / "reports/case-0/result.json").read_text())["status"] == "failed"
+
+
+@pytest.mark.parametrize("parallel_reports", ["automatic", "seekdb-code", "full"], indirect=True)
+def test_manual_seekdb_code_selection_preserves_publication_boundary(parallel_reports):
+    root, prepared, reports, policy = parallel_reports
+    plan = json.loads((prepared / "plan.json").read_text())
+    selection = plan["selection"]
+    expected = {"automatic": 10, "seekdb-code": 2, "full": 12}[selection]
+    if selection != "seekdb-code":
+        # Model release metadata, as in the existing support-declaration test.
+        # Real sdist validation remains covered by test_upgrade_publication.py.
+        plan["release"] = True
+        plan["release_notes"] = gate.support_text(policy, "en")
+        parallel.write_json(prepared / "plan.json", plan)
+        for path in reports.glob("*/result.json"):
+            result = json.loads(path.read_text())
+            result["plan_sha256"] = gate.sha256(prepared / "plan.json")
+            parallel.write_json(path, result)
+    accepted = parallel.collect(root, prepared, reports, root / "accepted")
+    verdict = json.loads((root / "accepted/result.json").read_text())
+    assert len(verdict["cases"]) == expected
+    assert len(verdict["deferred_cases"]) == 12 - expected
+    assert verdict["complete"] is (selection == "full")
+    assert bool(accepted) is (selection != "seekdb-code")
+    if selection == "automatic":
+        assert all(gate.manual_upgrade_case(case) for case in verdict["deferred_cases"])
+        publication = json.loads((root / "accepted/publication.json").read_text())
+        assert publication["complete"] is False
+        assert publication["deferred_cases"] == verdict["deferred_cases"]
+    elif selection == "seekdb-code":
+        assert all(gate.manual_upgrade_case(result["case"]) for result in verdict["cases"])
+        assert not (root / "accepted/publication.json").exists()
+        plan["release"] = True
+        plan["release_notes"] = gate.support_text(policy, "en")
+        parallel.write_json(prepared / "plan.json", plan)
+        with pytest.raises(gate.GateError, match="cannot authorize publication"):
+            parallel.collect(root, prepared, reports, root / "release-rejected")
+    support = gate.support_text(policy, "en")
+    assert "| seekdb | full-server-code |" not in support
+    assert "| seekdb | full-server-vector-code |" not in support
+    assert "| oceanbase | full-server-vector-code |" in support
+
+
+@pytest.mark.parametrize("parallel_reports", ["automatic"], indirect=True)
+@pytest.mark.parametrize("broken", ["missing", "failed", "skipped"])
+def test_manual_waiver_does_not_accept_missing_or_failed_automatic_cases(parallel_reports, broken):
+    root, prepared, reports, _ = parallel_reports
+    path = next(reports.glob("*/result.json"))
+    if broken == "missing":
+        path.unlink()
+    elif broken == "failed":
+        result = json.loads(path.read_text())
+        result["status"] = "failed"
+        parallel.write_json(path, result)
+    else:
+        junit = path.parent / "acceptance/junit.xml"
+        tree = ElementTree.parse(junit)  # noqa: S314 -- locally generated test fixture
+        ElementTree.SubElement(next(tree.iter("testcase")), "skipped")
+        tree.write(junit)
+    with pytest.raises(gate.GateError):
+        parallel.collect(root, prepared, reports, root / "accepted")
+    assert not (root / "accepted/validated-dist").exists()
+
+
+@pytest.mark.parametrize("parallel_reports", ["automatic"], indirect=True)
+def test_automatic_workers_reject_manual_case_execution(parallel_reports):
+    root, prepared, _reports, _policy = parallel_reports
+    plan = json.loads((prepared / "plan.json").read_text())
+    index = next(
+        i for i, case in enumerate(plan["resolved_matrix"]["required_cases"]) if gate.manual_upgrade_case(case)
+    )
+    with pytest.raises(gate.GateError, match="Unselected"):
+        parallel.execute_case(root, prepared, index, root / "unexpected-case")
+    assert not (root / "unexpected-case").exists()
+
+
+def test_serial_publication_gate_also_waives_only_seekdb_code(release):
+    root, wheel, policy = release
+    policy["automatic_sources"]["profiles"].extend(
+        {"backend": backend, "configuration": configuration, "suite": "tests/release_upgrades/test_example.py"}
+        for backend in ("sqlite", "seekdb", "oceanbase")
+        for configuration in ("full-server-code", "full-server-vector-code")
+    )
+    policy["mode"] = "supported-upgrades"
+    parallel.write_json(root / gate.MANIFEST, policy)
+    gate.check_docs(root, policy, write=True)
+    gate.gate(root, wheel, root / "serial", release=True, release_notes=gate.support_text(policy, "en"))
+    result = json.loads((root / "serial/result.json").read_text())
+    assert len(result["cases"]) == 7
+    assert len(result["deferred_cases"]) == 2
+    assert result["complete"] is False
+    assert all(gate.manual_upgrade_case(case) for case in result["deferred_cases"])
+    assert all(not gate.manual_upgrade_case(item["case"]) for item in result["cases"])
+
+
+@pytest.mark.parametrize("configuration", ["typo"])
+def test_unknown_configuration_fails_before_opening_database(tmp_path, configuration):
     work = tmp_path / "must-not-be-created"
     suite = gate.ROOT / "tests/release_upgrades/test_full_server.py"
     environment = dict(os.environ)
@@ -696,29 +1247,8 @@ def test_unimplemented_configuration_fails_before_opening_database(tmp_path, con
         check=False,
     )
     assert result.returncode != 0
-    assert f"Unimplemented acceptance configuration: {configuration}" in result.stdout
+    assert "Unregistered acceptance configuration" in result.stdout
     assert not work.exists()
-
-
-@pytest.mark.parametrize("actual", [None, "full-server-vector", "full-server-no-vector"])
-def test_backend_evidence_must_match_executed_configuration(tmp_path, actual):
-    evidence = {
-        "backend": "sqlite",
-        "engine_version": "3",
-        "driver_version": "1",
-        "source_schema": "a",
-        "target_schema": "b",
-        "fresh_schema": "b",
-    }
-    if actual is not None:
-        evidence["configuration"] = actual
-    path = tmp_path / "backend.json"
-    path.write_text(json.dumps(evidence))
-    if actual == "full-server-no-vector":
-        assert gate.validate_backend_evidence(path, "sqlite", actual) == evidence
-    else:
-        with pytest.raises(gate.GateError, match="Configuration evidence"):
-            gate.validate_backend_evidence(path, "sqlite", "full-server-no-vector")
 
 
 @pytest.mark.skipif(sys.platform == "linux", reason="Linux supports the required process ownership")
@@ -726,3 +1256,18 @@ def test_full_acceptance_rejects_unsupported_host_before_installing(tmp_path):
     with pytest.raises(gate.GateError, match="requires Linux"):
         gate.run_case(tmp_path, tmp_path / "wheel", {}, tmp_path / "report")
     assert not (tmp_path / "report").exists()
+
+
+@pytest.mark.parametrize("configuration", [None, "different-profile"])
+def test_parallel_collection_rejects_unproven_configuration(parallel_reports, configuration):
+    root, prepared, reports, _ = parallel_reports
+    path = reports / "case-0/acceptance/backend.json"
+    backend = json.loads(path.read_text())
+    if configuration is None:
+        del backend["configuration"]
+    else:
+        backend["configuration"] = configuration
+    parallel.write_json(path, backend)
+    with pytest.raises(gate.GateError, match="Configuration evidence"):
+        parallel.collect(root, prepared, reports, root / "accepted")
+    assert not (root / "accepted/validated-dist").exists()

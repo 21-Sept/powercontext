@@ -34,8 +34,23 @@ from powercontext.server.settings import ServerSettings
 async def verify(historical):
     token = "isolated-viewer-token"  # noqa: S105 -- disposable fixture credential
     viewer = PrincipalRef(type="user", id="upgrade-viewer")
+    settings = ServerSettings()
+    # Keep the persisted processing capabilities unchanged. Embedded releases
+    # require the all role; use a separate, unprivileged background identity
+    # and disable scheduling instead of running workers as the viewer.
+    settings = settings.model_copy(
+        update={
+            "access": settings.access.model_copy(update={"background_principal_id": "upgrade-authz-probe"}),
+            "runtime": settings.runtime.model_copy(
+                update={
+                    "schedule_seconds": None,
+                    "experience_schedule_seconds": None,
+                }
+            ),
+        }
+    )
     app = create_server_app(
-        settings=ServerSettings(),
+        settings=settings,
         authentication_provider=StaticBearerAuthenticationProvider(token, viewer),
     )
     async with (
