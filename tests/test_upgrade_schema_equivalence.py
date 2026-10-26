@@ -14,11 +14,15 @@
 
 """Prevent schema equivalence from erasing differences in SQL literals."""
 
+import asyncio
 import json
 import sqlite3
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
+from scripts import upgrade_database_probe
 from tests.release_upgrades.test_full_server import canonical_schema
 
 
@@ -90,8 +94,43 @@ def test_native_logical_schema_preserves_object_differences(kind):
     left = {
         "logical_tables": {"example": {"default": "a  b"}},
         "views": {"example_view": "SELECT 'a  b'"},
-        "triggers": {"example_trigger": ["INSERT", "example", "SET NEW.value = 'a  b'"]},
+        "triggers": {"example_trigger": ["BEFORE", "INSERT", "example", "SET NEW.value = 'a  b'"]},
     }
     right = json.loads(json.dumps(left).replace("a  b", "a b"))
     changed = {**left, kind: right[kind]}
     assert canonical_schema(left) != canonical_schema(changed)
+
+
+def test_native_probe_preserves_trigger_timing(monkeypatch, tmp_path):
+    """Synthetic driver rows exercise the probe and comparator, not a live backend."""
+    monkeypatch.setenv("PC_UPGRADE_OCEANBASE_URL", "mysql://fixture@localhost/fixture")
+    monkeypatch.delenv("POWERCONTEXT_SERVER_INFERENCE_EMBEDDING_MODEL", raising=False)
+    monkeypatch.setattr(upgrade_database_probe, "version", lambda _name: "test-driver")
+    snapshots = []
+    for timing in ("BEFORE", "AFTER"):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = ("test-engine", "mysql")
+        cursor.fetchall.return_value = []
+
+        def execute(query, *, timing=timing, cursor=cursor):
+            if query == "SHOW TRIGGERS":
+                fields = ("Trigger", "Event", "Table", "Statement", "Timing")
+                cursor.description = [(field,) for field in fields]
+                cursor.fetchall.return_value = [("example_trigger", "INSERT", "example", "SET @seen = 1", timing)]
+
+        cursor.execute.side_effect = execute
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        connect = MagicMock()
+        connect.return_value.__enter__.return_value = connection
+        monkeypatch.setattr(
+            upgrade_database_probe, "import_module", lambda _name, connect=connect: SimpleNamespace(connect=connect)
+        )
+        snapshot = asyncio.run(
+            upgrade_database_probe.inspect("oceanbase", tmp_path, add_revision=False, canonical=True)
+        )
+        snapshots.append(json.loads(json.dumps(snapshot)))
+
+    assert snapshots[0]["trigger_rows"][0]["Timing"] == "BEFORE"
+    assert snapshots[1]["trigger_rows"][0]["Timing"] == "AFTER"
+    assert canonical_schema(snapshots[0]) != canonical_schema(snapshots[1])

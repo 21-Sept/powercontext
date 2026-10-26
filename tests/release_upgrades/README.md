@@ -158,7 +158,8 @@ The separate SDK fixture tests the old pending intent's format and acknowledgmen
 execution and evidence preservation, not real-model quality. Vector storage uses its separately registered profiles;
 passing a no-vector case cannot establish vector acceptance.
 SQLite inventories include indexes, views and triggers; MySQL-family table DDL includes indexes and constraints,
-and views are collected separately. MySQL comparison parses columns, indexes (including parser properties), constraints, and CHECK expressions, ignoring only physical formatting and backend-generated constraint names. Views and triggers are collected independently. SQLite normalizes whitespace and identifier quoting. Structural differences fail rather than being silently excluded.
+and views are collected separately. MySQL comparison parses columns, indexes (including parser properties), constraints, and CHECK expressions, ignoring only physical formatting and backend-generated constraint names. Views and triggers are collected independently; native trigger comparison includes timing (`BEFORE`/`AFTER`),
+event, table and statement. SQLite preserves quoted tokens and normalizes only unquoted formatting whitespace. Structural differences fail rather than being silently excluded.
 
 Regenerate installation support regions with
 `uv run python scripts/upgrade_release_gate.py --write-docs` and run `make upgrade-policy-check`. When persistence
@@ -224,3 +225,18 @@ as formatting changes. Unknown configurations and missing or mismatched executio
 Full installed-release acceptance requires Linux process ownership and descendant cleanup. Other hosts can run
 the policy and comparison regressions, but the full runner rejects them before creating workspaces or installing
 packages. Passing local regressions is not evidence of a successful native-backend upgrade.
+
+
+## Acceptance boundaries
+
+A passing run establishes the selected cases for that exact target build, not every historical production database.
+The source fixture is newly initialized with the official 1.3.0 package and representative data; it does not recreate
+an older-version-to-1.3.0 lineage or an existing user's database. Each future target build must rerun acceptance.
+The Linux matrix does not establish macOS embedded-engine, desktop-daemon or in-place tool-installation behavior.
+Source and target dependency resolution does not freeze the dependencies of a historical installation, so recorded
+engine/driver versions must be considered when interpreting compatibility evidence.
+
+The positive path exercises the public `db-migrate` commands, not the historical `atomic-memory-migrate` procedure.
+SQLite tests automatic backup restoration; seekDB and OceanBase explicitly skip backups in this suite and do not
+establish backup/rollback acceptance. The two manual embedded seekDB Code cases require their own successful runs;
+the ten automatic results cannot establish those configurations.
