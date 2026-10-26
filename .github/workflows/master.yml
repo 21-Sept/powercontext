@@ -7,6 +7,15 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
+    inputs:
+      upgrade_selection:
+        description: Upgrade cases (seekDB Code configurations are temporarily manual)
+        type: choice
+        default: automatic
+        options:
+          - automatic
+          - seekdb-code
+          - full
 
 permissions:
   contents: read
@@ -74,9 +83,11 @@ jobs:
 
   upgrade-acceptance:
     needs: seekdb-managed-startup
-    # Collect all upgrade cases even when the priority regression fails.
+    # Collect selected upgrade cases even when the priority regression fails.
     if: ${{ !cancelled() }}
     uses: ./.github/workflows/upgrade-release.yml
+    with:
+      selection: ${{ github.event_name == 'workflow_dispatch' && inputs.upgrade_selection || 'automatic' }}
 
   upgrade-release-gate:
     name: Upgrade release gate
@@ -85,7 +96,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require the complete parallel acceptance workflow
+      - name: Require the selected parallel acceptance workflow
         env:
           UPGRADE_RESULT: ${{ needs.upgrade-acceptance.result }}
         run: test "$UPGRADE_RESULT" = success

@@ -16,6 +16,7 @@ jobs:
     uses: ./.github/workflows/upgrade-release.yml
     with:
       release: true
+      selection: automatic
 
   pypi-publish:
     runs-on: ubuntu-latest

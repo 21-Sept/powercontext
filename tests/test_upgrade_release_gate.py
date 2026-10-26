@@ -418,6 +418,7 @@ def test_publishing_jobs_depend_on_nonoptional_preupload_upgrade_gate():
     build = workflow["jobs"]["release-build"]
     assert build["uses"] == "./.github/workflows/upgrade-release.yml"
     assert build["with"]["release"] is True
+    assert build["with"]["selection"] == "automatic"
     assert not build.get("continue-on-error")
     shared = yaml.safe_load((root / ".github/workflows/upgrade-release.yml").read_text())["jobs"]
     prepare = shared["prepare"]["steps"]
@@ -895,13 +896,28 @@ def _process_exists(pid):
 
 
 @pytest.fixture
-def parallel_reports(release, monkeypatch):
+def parallel_reports(release, monkeypatch, request):
     root, wheel, policy = release
+    selection = getattr(request, "param", "full")
+    if hasattr(request, "param"):
+        policy["automatic_sources"]["profiles"] = [
+            {"backend": backend, "configuration": configuration, "suite": "tests/release_upgrades/test_example.py"}
+            for backend in ("sqlite", "seekdb", "oceanbase")
+            for configuration in (
+                "full-server-no-vector",
+                "full-server-vector",
+                "full-server-code",
+                "full-server-vector-code",
+            )
+        ]
+        policy["mode"] = "supported-upgrades"
+        parallel.write_json(root / gate.MANIFEST, policy)
+        gate.check_docs(root, policy, write=True)
     dist = root / "dist"
     dist.mkdir()
     shutil.copyfile(wheel, dist / wheel.name)
     prepared = root / "prepared"
-    scheduled = parallel.prepare(root, dist, prepared, release=False, release_notes=None)
+    scheduled = parallel.prepare(root, dist, prepared, release=False, release_notes=None, selection=selection)
     executed = []
 
     def execute(_root, tested_wheel, case, output):
@@ -920,6 +936,23 @@ def parallel_reports(release, monkeypatch):
             "tenant_mode": "mysql",
             "proxy_version": "direct",
         }
+        if case["configuration"] in {"full-server-code", "full-server-vector-code"}:
+            backend["code"] = {
+                "fingerprint": "a" * 64,
+                "immutable_cache_files_preserved": True,
+                "symbol_ids_preserved": True,
+                "server_query_ready": True,
+            }
+        if case["configuration"] in {"full-server-vector", "full-server-vector-code"}:
+            backend["vectors"] = {
+                "dimension": 4 if case["configuration"].endswith("-code") else 3,
+                "maintenance_embedding_requests": 0,
+                "historical_atomic_and_topic_embeddings_preserved": True,
+                "historical_and_new_vector_reads": True,
+                "fresh_vector_read": True,
+                "profile_drift_rejected": True,
+                "missing_sqlite_helper_rejected": True,
+            }
         parallel.write_json(output / "installed.json", installed)
         parallel.write_json(output / "backend.json", backend)
         tree = ElementTree.Element("testsuite")
@@ -934,8 +967,8 @@ def parallel_reports(release, monkeypatch):
     reports = root / "reports"
     for entry in reversed(scheduled["include"]):
         parallel.execute_case(root, prepared, entry["index"], reports / f"case-{entry['index']}")
-    assert len(executed) == len(scheduled["include"]) == 3
-    assert len({(case["source_version"], case["backend"], case["configuration"]) for case in executed}) == 3
+    assert len(executed) == len(scheduled["include"])
+    assert len({(case["source_version"], case["backend"], case["configuration"]) for case in executed}) == len(executed)
     return root, prepared, reports, policy
 
 
@@ -1079,3 +1112,96 @@ def test_parallel_worker_rejects_artifact_changed_during_execution(release, monk
     with pytest.raises(gate.GateError, match="distributions changed"):
         parallel.execute_case(root, prepared, 0, root / "reports/case-0")
     assert json.loads((root / "reports/case-0/result.json").read_text())["status"] == "failed"
+
+
+@pytest.mark.parametrize("parallel_reports", ["automatic", "seekdb-code", "full"], indirect=True)
+def test_manual_seekdb_code_selection_preserves_publication_boundary(parallel_reports):
+    root, prepared, reports, policy = parallel_reports
+    plan = json.loads((prepared / "plan.json").read_text())
+    selection = plan["selection"]
+    expected = {"automatic": 10, "seekdb-code": 2, "full": 12}[selection]
+    if selection != "seekdb-code":
+        # Model release metadata, as in the existing support-declaration test.
+        # Real sdist validation remains covered by test_upgrade_publication.py.
+        plan["release"] = True
+        plan["release_notes"] = gate.support_text(policy, "en")
+        parallel.write_json(prepared / "plan.json", plan)
+        for path in reports.glob("*/result.json"):
+            result = json.loads(path.read_text())
+            result["plan_sha256"] = gate.sha256(prepared / "plan.json")
+            parallel.write_json(path, result)
+    accepted = parallel.collect(root, prepared, reports, root / "accepted")
+    verdict = json.loads((root / "accepted/result.json").read_text())
+    assert len(verdict["cases"]) == expected
+    assert len(verdict["deferred_cases"]) == 12 - expected
+    assert verdict["complete"] is (selection == "full")
+    assert bool(accepted) is (selection != "seekdb-code")
+    if selection == "automatic":
+        assert all(gate.manual_upgrade_case(case) for case in verdict["deferred_cases"])
+        publication = json.loads((root / "accepted/publication.json").read_text())
+        assert publication["complete"] is False
+        assert publication["deferred_cases"] == verdict["deferred_cases"]
+    elif selection == "seekdb-code":
+        assert all(gate.manual_upgrade_case(result["case"]) for result in verdict["cases"])
+        assert not (root / "accepted/publication.json").exists()
+        plan["release"] = True
+        plan["release_notes"] = gate.support_text(policy, "en")
+        parallel.write_json(prepared / "plan.json", plan)
+        with pytest.raises(gate.GateError, match="cannot authorize publication"):
+            parallel.collect(root, prepared, reports, root / "release-rejected")
+    support = gate.support_text(policy, "en")
+    assert "| seekdb | full-server-code |" not in support
+    assert "| seekdb | full-server-vector-code |" not in support
+    assert "| oceanbase | full-server-vector-code |" in support
+
+
+@pytest.mark.parametrize("parallel_reports", ["automatic"], indirect=True)
+@pytest.mark.parametrize("broken", ["missing", "failed", "skipped"])
+def test_manual_waiver_does_not_accept_missing_or_failed_automatic_cases(parallel_reports, broken):
+    root, prepared, reports, _ = parallel_reports
+    path = next(reports.glob("*/result.json"))
+    if broken == "missing":
+        path.unlink()
+    elif broken == "failed":
+        result = json.loads(path.read_text())
+        result["status"] = "failed"
+        parallel.write_json(path, result)
+    else:
+        junit = path.parent / "acceptance/junit.xml"
+        tree = ElementTree.parse(junit)  # noqa: S314 -- locally generated test fixture
+        ElementTree.SubElement(next(tree.iter("testcase")), "skipped")
+        tree.write(junit)
+    with pytest.raises(gate.GateError):
+        parallel.collect(root, prepared, reports, root / "accepted")
+    assert not (root / "accepted/validated-dist").exists()
+
+
+@pytest.mark.parametrize("parallel_reports", ["automatic"], indirect=True)
+def test_automatic_workers_reject_manual_case_execution(parallel_reports):
+    root, prepared, _reports, _policy = parallel_reports
+    plan = json.loads((prepared / "plan.json").read_text())
+    index = next(
+        i for i, case in enumerate(plan["resolved_matrix"]["required_cases"]) if gate.manual_upgrade_case(case)
+    )
+    with pytest.raises(gate.GateError, match="Unselected"):
+        parallel.execute_case(root, prepared, index, root / "unexpected-case")
+    assert not (root / "unexpected-case").exists()
+
+
+def test_serial_publication_gate_also_waives_only_seekdb_code(release):
+    root, wheel, policy = release
+    policy["automatic_sources"]["profiles"].extend(
+        {"backend": backend, "configuration": configuration, "suite": "tests/release_upgrades/test_example.py"}
+        for backend in ("sqlite", "seekdb", "oceanbase")
+        for configuration in ("full-server-code", "full-server-vector-code")
+    )
+    policy["mode"] = "supported-upgrades"
+    parallel.write_json(root / gate.MANIFEST, policy)
+    gate.check_docs(root, policy, write=True)
+    gate.gate(root, wheel, root / "serial", release=True, release_notes=gate.support_text(policy, "en"))
+    result = json.loads((root / "serial/result.json").read_text())
+    assert len(result["cases"]) == 7
+    assert len(result["deferred_cases"]) == 2
+    assert result["complete"] is False
+    assert all(gate.manual_upgrade_case(case) for case in result["deferred_cases"])
+    assert all(not gate.manual_upgrade_case(item["case"]) for item in result["cases"])

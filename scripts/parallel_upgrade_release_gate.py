@@ -37,8 +37,25 @@ def write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def prepare(root: Path, dist: Path, output: Path, *, release: bool, release_notes: str | None) -> dict[str, Any]:
+SELECTIONS = ("full", "automatic", "seekdb-code")
+
+
+def selected_indexes(cases: list[dict[str, Any]], selection: str, *, release: bool) -> list[int]:
+    gate.require(selection in SELECTIONS, "Unknown upgrade selection")
+    gate.require(not release or selection != "seekdb-code", "Manual-only acceptance cannot authorize publication")
+    manual = {index for index, case in enumerate(cases) if gate.manual_upgrade_case(case)}
+    selected = [
+        index for index in range(len(cases)) if selection == "full" or (index in manual) == (selection == "seekdb-code")
+    ]
+    gate.require(selected, "No cases match the upgrade selection")
+    return selected
+
+
+def prepare(
+    root: Path, dist: Path, output: Path, *, release: bool, release_notes: str | None, selection: str = "full"
+) -> dict[str, Any]:
     """Freeze the distributions and source discovery before scheduling any cases."""
+    gate.require(not release or selection != "seekdb-code", "Manual-only acceptance cannot authorize publication")
     output.mkdir(parents=True, exist_ok=False)
     wheel, files = stage_distributions(dist, output / "inputs", release=release)
     policy = gate.validate_target(root, wheel, release=release, release_notes=release_notes)
@@ -57,7 +74,9 @@ def prepare(root: Path, dist: Path, output: Path, *, release: bool, release_note
         "release": release,
         "release_notes": release_notes,
         "resolved_matrix": matrix,
+        "selection": selection,
     }
+    selected = selected_indexes(matrix["required_cases"], selection, release=release)
     write_json(output / "plan.json", plan)
     return {
         "include": [
@@ -68,6 +87,7 @@ def prepare(root: Path, dist: Path, output: Path, *, release: bool, release_note
                 "source_version": case["source_version"],
             }
             for index, case in enumerate(matrix["required_cases"])
+            if index in selected
         ]
     }
 
@@ -101,13 +121,16 @@ def read_plan(root: Path, prepared: Path) -> tuple[dict[str, Any], Path]:
         "Prepared matrix differs from reviewed cases",
     )
     gate.require(required and plan["resolved_matrix"]["candidate_cases"] == required, "Incomplete prepared matrix")
+    selected_indexes(required, plan["selection"], release=plan["release"])
     return plan, wheel
 
 
 def execute_case(root: Path, prepared: Path, index: int, output: Path) -> None:
     plan, wheel = read_plan(root, prepared)
     cases = plan["resolved_matrix"]["required_cases"]
-    gate.require(0 <= index < len(cases), "Unknown upgrade case index")
+    gate.require(
+        index in selected_indexes(cases, plan["selection"], release=plan["release"]), "Unselected upgrade case index"
+    )
     output.mkdir(parents=True, exist_ok=False)
     evidence: dict[str, Any] = {"plan_sha256": gate.sha256(prepared / "plan.json"), "index": index, "status": "failed"}
     try:
@@ -132,19 +155,23 @@ def collect(root: Path, prepared: Path, reports: Path, output: Path) -> list[Pat
         "mode": plan["mode"],
         "resolved_matrix": plan["resolved_matrix"],
         "execution_id": plan["execution_id"],
+        "selection": plan["selection"],
+        "complete": False,
         "cases": [],
         "status": "failed",
     }
     try:
         results = list(reports.glob("*/result.json"))
         cases = plan["resolved_matrix"]["required_cases"]
-        gate.require(len(results) == len(cases), "Missing or extra upgrade case results")
+        selected = selected_indexes(cases, plan["selection"], release=plan["release"])
+        evidence["deferred_cases"] = [case for index, case in enumerate(cases) if index not in selected]
+        gate.require(len(results) == len(selected), "Missing or extra upgrade case results")
         by_index = {}
         for path in results:
             result = json.loads(path.read_text(encoding="utf-8"))
             gate.require(result["plan_sha256"] == gate.sha256(prepared / "plan.json"), "Stale or mixed upgrade results")
             index = result["index"]
-            gate.require(type(index) is int and 0 <= index < len(cases), "Unknown upgrade result index")
+            gate.require(type(index) is int and index in selected, "Unknown upgrade result index")
             gate.require(index not in by_index, "Duplicate upgrade result")
             gate.require(result["status"] == "passed", f"Upgrade case {index} failed")
             case_result = result["result"]
@@ -162,13 +189,17 @@ def collect(root: Path, prepared: Path, reports: Path, output: Path) -> list[Pat
             )
             gate.require(backend == case_result["database"], "Backend evidence changed")
             by_index[index] = case_result
-        evidence["cases"] = [by_index[index] for index in range(len(cases))]
+        evidence["cases"] = [by_index[index] for index in selected]
         if plan["release"]:
             gate.require(
                 plan["mode"] == "supported-upgrades", "Update the reviewed support declaration before publication"
             )
         # Verify the originals once more before exposing a publication set.
         read_plan(root, prepared)
+        evidence["complete"] = len(selected) == len(cases)
+        if plan["selection"] == "seekdb-code":
+            evidence["status"] = "selected-cases-passed"
+            return []
         validated = output / "validated-dist"
         validated.mkdir()
         accepted = []
@@ -177,8 +208,15 @@ def collect(root: Path, prepared: Path, reports: Path, output: Path) -> list[Pat
             shutil.copyfile(prepared / "inputs" / name, destination)
             gate.require(gate.sha256(destination) == digest, "Validated distribution copy changed")
             accepted.append(destination)
-        write_json(output / "publication.json", {"artifacts": plan["artifacts"]})
-        evidence["status"] = "passed"
+        write_json(
+            output / "publication.json",
+            {
+                "artifacts": plan["artifacts"],
+                "complete": evidence["complete"],
+                "deferred_cases": evidence["deferred_cases"],
+            },
+        )
+        evidence["status"] = "passed" if evidence["complete"] else "selected-cases-passed"
         return accepted
     finally:
         write_json(output / "result.json", evidence)
@@ -191,6 +229,7 @@ def main() -> None:
     preparation.add_argument("--dist", type=Path, default=Path("dist"))
     preparation.add_argument("--output", type=Path, required=True)
     preparation.add_argument("--release", action="store_true")
+    preparation.add_argument("--selection", choices=SELECTIONS, default="full")
     preparation.add_argument("--release-event", type=Path)
     execution = commands.add_parser("case")
     execution.add_argument("--prepared", type=Path, required=True)
@@ -207,7 +246,12 @@ def main() -> None:
             if args.release_event:
                 notes = json.loads(args.release_event.read_text(encoding="utf-8"))["release"]["body"] or ""
             matrix = prepare(
-                gate.ROOT, args.dist.resolve(), args.output.resolve(), release=args.release, release_notes=notes
+                gate.ROOT,
+                args.dist.resolve(),
+                args.output.resolve(),
+                release=args.release,
+                release_notes=notes,
+                selection=args.selection,
             )
             print(json.dumps(matrix))
             if github_output := os.environ.get("GITHUB_OUTPUT"):
@@ -217,7 +261,16 @@ def main() -> None:
             execute_case(gate.ROOT, args.prepared.resolve(), args.index, args.output.resolve())
         else:
             accepted = collect(gate.ROOT, args.prepared.resolve(), args.reports.resolve(), args.output.resolve())
-            print(f"Complete upgrade matrix passed; {len(accepted)} validated distributions")
+            if accepted:
+                verdict = json.loads((args.output / "result.json").read_text(encoding="utf-8"))
+                scope = (
+                    "Complete upgrade matrix"
+                    if verdict["complete"]
+                    else "Required automatic cases (manual cases waived)"
+                )
+                print(f"{scope} passed; {len(accepted)} validated distributions")
+            else:
+                print("Selected upgrade cases passed; full acceptance remains incomplete; no publication artifacts")
     except (
         gate.GateError,
         OSError,

@@ -1,8 +1,8 @@
 # Installed-release upgrade acceptance
 
 `release/upgrade-support.json` requires **positive** 1.3.0 upgrades on SQLite, embedded seekDB, and OceanBase.
-The current `upgrade-required` mode keeps the upgrade support declaration unverified while requiring every case
-to run and pass. Missing full migration integration (#2154) fails the gate. `supported-upgrades` runs the same
+The current `upgrade-required` mode keeps the upgrade support declaration unverified while requiring every automatic case
+to run and pass. The two embedded seekDB Code configurations are temporarily manual and do not block publication. Missing full migration integration (#2154) fails the gate. `supported-upgrades` runs the same
 matrix and enables publication after the reviewed support declaration is updated. `fresh-install-only` is rejected.
 
 ## Reviewed sources and current target
@@ -12,7 +12,7 @@ The declared target release is **1.4.1**. Public migration output maps the two s
 these names while retaining the original revision IDs in execution and recovery evidence.
 
 The `automatic_sources` policy uses `strategy: "fixed-version"` and `source_version: "1.3.0"`.
-Explicit `cases` are empty. CI requires twelve configurations of the 1.3.0 source across SQLite,
+Explicit `cases` are empty. The catalog retains twelve configurations of the 1.3.0 source across SQLite,
 embedded seekDB, and OceanBase. The target is the **actual wheel built by the shared preparation job**, not the latest published
 PyPI package. Later target releases keep the same 1.3.0 baseline; intermediate releases are not added automatically.
 The framework and fixture retain the independently registered 1.4.0 adapter, but CI does not execute its
@@ -64,7 +64,7 @@ PR and publication CI use the same reusable workflow, `upgrade-release.yml`:
 
 1. **Prepare once:** build the wheel and source archive, rebuild the source archive to verify matching contents,
    validate release metadata, and resolve the source catalog into one frozen twelve-case plan.
-2. **Run independent cases:** twelve matrix jobs each execute exactly one source/backend/configuration tuple.
+2. **Run independent cases:** each selected matrix job executes exactly one source/backend/configuration tuple.
    Every job downloads the same prepared artifacts and verifies their hashes. Each OceanBase job owns a separate
    container; SQLite and embedded seekDB run in their own runners. `fail-fast: false` allows other cases to finish
    after a failure. There is no second serial execution of the matrix.
@@ -72,10 +72,28 @@ PR and publication CI use the same reusable workflow, `upgrade-release.yml`:
    versions and backend evidence, and reject duplicate, missing, skipped, failed or mixed-plan reports. The plan
    binds the workflow run, checkout, reviewed policy and distribution hashes. A new preparation gets a new identity;
    rerunning only failed cases can reuse the unchanged prepared plan and the other cases' results from that run.
-4. **Gate publication:** require all case jobs, including cleanup and artifact upload, to succeed. Only the accepted
+4. **Gate publication:** require all case jobs, including cleanup and artifact upload, to succeed. Only the accepted automatic
    distribution snapshot can reach PyPI or GitHub Release assets. `upgrade-required` still blocks publication.
 
-The fixed required check remains **Upgrade release gate**. It fails if the shared workflow fails or is cancelled.
+Temporarily, Main and Release automatically require 10 configurations. Embedded seekDB `full-server-code`
+and `full-server-vector-code` run only on manual request while the available engine exhibits DDL waits.
+In Actions → Main → Run workflow, select the branch and set `upgrade_selection` to `seekdb-code` to run
+those two upgrade configurations alone, or `full` to run all 12. Other Main CI suites still run normally.
+For a PR branch, the equivalent command is:
+
+```sh
+gh workflow run master.yml --repo oceanbase/powercontext --ref codex/issue-2154-full-server-upgrade -f upgrade_selection=seekdb-code
+```
+
+`automatic` runs the remaining 10. Reports list deferred cases and mark full acceptance incomplete; a passing
+automatic run can expose the tested distributions for publication without evidence from the manual cases.
+A manual-only run produces no publication artifacts and cannot authorize release. Missing, skipped or failed
+automatic cases still block publication, and the reviewed support declaration remains mandatory. Passing
+automatic CI does not certify either seekDB Code configuration; they are excluded from generated supported
+upgrade claims. After validating a fixed seekDB release, remove the temporary `manual_upgrade_case` waiver
+and restore Main and Release to `full` selection.
+
+The fixed required check remains **Upgrade release gate**; on Main it covers only the selected configurations. It fails if the shared workflow fails or is cancelled.
 Each case job has a sixty-minute budget including provisioning; existing thirty-minute command deadlines and
 owned-descendant cleanup remain unchanged. Wall time depends on the slowest case and available runner capacity,
 not the sum of twelve cases. This increases concurrent runner use and does not promise a fixed speedup.
@@ -187,4 +205,4 @@ Main first runs the previously failing embedded seekDB concurrent-startup regres
 `SeekDB managed startup regression (priority)`. Its three isolated Server/SDK scenarios run
 once, before the installed-release workflow and the remaining seekDB clean-migration job.
 Those jobs still run after a failed priority check unless the workflow is cancelled; the
-12 installed-release cases remain disjoint and parallel. Other CI suites can run concurrently.
+selected installed-release cases remain disjoint and parallel. Other CI suites can run concurrently.

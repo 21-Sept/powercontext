@@ -3,6 +3,10 @@ name: Parallel installed-release upgrade acceptance
 on:
   workflow_call:
     inputs:
+      selection:
+        description: full, automatic, or seekdb-code; manual Code cases do not gate publication
+        type: string
+        default: full
       release:
         description: Enforce release metadata and expose accepted publication artifacts
         type: boolean
@@ -90,13 +94,14 @@ jobs:
         id: prepare
         env:
           RELEASE: ${{ inputs.release }}
+          SELECTION: ${{ inputs.selection }}
         run: |
           args=()
           if [ "$RELEASE" = true ]; then
             args+=(--release --release-event "$GITHUB_EVENT_PATH")
           fi
           uv run python scripts/parallel_upgrade_release_gate.py prepare \
-            --output "$RUNNER_TEMP/upgrade-prepared" "${args[@]}"
+            --output "$RUNNER_TEMP/upgrade-prepared" --selection "$SELECTION" "${args[@]}"
 
       - name: Share the exact prepared inputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -163,7 +168,7 @@ jobs:
           retention-days: 30
 
   collect:
-    name: Verify the complete upgrade matrix
+    name: Verify the selected upgrade matrix
     needs: [prepare, cases]
     if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-24.04
@@ -185,7 +190,7 @@ jobs:
         with:
           pattern: upgrade-case-*
           path: ${{ runner.temp }}/upgrade-case-reports/
-      - name: Require complete evidence for the exact prepared distributions
+      - name: Require all selected evidence for the exact prepared distributions
         run: >-
           uv run python scripts/parallel_upgrade_release_gate.py collect
           --prepared "$RUNNER_TEMP/upgrade-prepared"

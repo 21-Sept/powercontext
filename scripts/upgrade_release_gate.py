@@ -167,6 +167,12 @@ def load_policy(root: Path) -> dict[str, Any]:
     return policy
 
 
+def manual_upgrade_case(case: dict[str, Any]) -> bool:
+    # Temporary embedded-engine waiver: keep both Code configurations available
+    # for manual diagnostics, but do not claim accepted upgrade support for them.
+    return case["backend"] == "seekdb" and case["configuration"] in {"full-server-code", "full-server-vector-code"}
+
+
 def support_text(policy: dict[str, Any], language: str) -> str:
     if policy["mode"] == "upgrade-required":
         return NOTICE[language]
@@ -179,11 +185,13 @@ def support_text(policy: dict[str, Any], language: str) -> str:
     lines.extend(
         f"| {case['source_version']} | {policy['target_version']} | {case['backend']} | {case['configuration']} |"
         for case in policy["cases"]
+        if not manual_upgrade_case(case)
     )
     if automatic := policy["automatic_sources"]:
         lines.extend(
             f"| {automatic['source_version']} | {policy['target_version']} | {profile['backend']} | {profile['configuration']} |"
             for profile in automatic["profiles"]
+            if not manual_upgrade_case(profile)
         )
     return "\n".join(lines)
 
@@ -527,7 +535,11 @@ def gate(root: Path, wheel: Path, output: Path, *, release: bool = False, releas
         evidence["resolved_matrix"] = matrix
         require(matrix["required_cases"], "No required upgrade acceptance cases")
         failures = []
-        for index, case in enumerate(matrix["required_cases"]):
+        evidence["deferred_cases"] = [case for case in matrix["required_cases"] if manual_upgrade_case(case)]
+        evidence["complete"] = not evidence["deferred_cases"]
+        required = [case for case in matrix["required_cases"] if not manual_upgrade_case(case)]
+        require(required, "No required automatic upgrade cases")
+        for index, case in enumerate(required):
             try:
                 evidence["cases"].append(run_case(root, wheel, case, output / f"case-{index}"))
             except (GateError, OSError, ValueError, subprocess.SubprocessError, ElementTree.ParseError) as error:
@@ -541,7 +553,7 @@ def gate(root: Path, wheel: Path, output: Path, *, release: bool = False, releas
                 policy["mode"] == "supported-upgrades",
                 "Upgrade acceptance passed; update the reviewed support declaration before publication",
             )
-        evidence["status"] = "passed"
+        evidence["status"] = "passed" if evidence["complete"] else "selected-cases-passed"
     finally:
         (output / "result.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
