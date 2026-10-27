@@ -41,7 +41,7 @@ from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.server.factory import create_server_app
 from powercontext.server.settings import AccessControlConfig, BearerAuthConfig, ServerSettings
 
-CINDY_COMMIT = "ebf092dc3fb9dfa3ad25b10258979c0bcd396634"
+CINDY_COMMIT = "6e12261af3121a1fc8f56a23481f3b99bb32787c"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROVIDER_SCRIPT = """
 import { readFileSync } from 'node:fs';
@@ -61,7 +61,7 @@ process.stdout.write(JSON.stringify({ config, env: provider.getExtraEnv(context)
 def cindy_provider() -> Path:
     source = os.environ.get("POWERCONTEXT_CINDY_SOURCE")
     if not source:
-        pytest.skip("set POWERCONTEXT_CINDY_SOURCE to the Cindy v0.1.104 source checkout")
+        pytest.skip("set POWERCONTEXT_CINDY_SOURCE to the Cindy v0.1.115 source checkout")
     root = Path(source).resolve()
     revision = subprocess.run(
         ["git", "-C", str(root), "rev-parse", "HEAD"],  # noqa: S607 - fixed executable, no shell.
@@ -69,7 +69,7 @@ def cindy_provider() -> Path:
         capture_output=True,
         text=True,
     ).stdout.strip()
-    assert revision == CINDY_COMMIT, "provider acceptance requires the pinned Cindy 0.1.104 source"
+    assert revision == CINDY_COMMIT, "provider acceptance requires the pinned Cindy 0.1.115 source"
     provider = root / "apps/desktop/src/main/mcp-integrations/custom-mcp-provider.ts"
     assert provider.is_file()
     return provider

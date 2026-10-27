@@ -15,11 +15,12 @@
 """Standalone Cindy archive with upstream gateway source and real TCP Server.
 
 The credential/message bridge and unused Host storage imports are simulated.
-This does not launch Electron or establish live harness/model acceptance.
+Opt-in native acceptance runs the upstream Codex host and a live model, without Electron.
 """
 
 import asyncio
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -27,6 +28,7 @@ from pathlib import Path
 from zipfile import ZipFile
 
 import httpx
+import pytest
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
@@ -38,11 +40,57 @@ from tests.e2e.test_cindy_mcp_chain import cindy_server as cindy_server_fixture 
 ROOT = Path(__file__).resolve().parents[2]
 
 
+@pytest.mark.parametrize("native_codex", [False, True], ids=["gateway", "native-codex"])
 def test_standalone_cindy_hooks_recall_capture_and_isolate_sessions(
-    tmp_path: Path, cindy_provider: Path, cindy_server: tuple[str, str]
+    tmp_path: Path, cindy_provider: Path, cindy_server: tuple[str, str], native_codex: bool
 ) -> None:
     url, token = cindy_server
     source = cindy_provider.parents[5]
+    native_options: dict[str, str] = {}
+    if native_codex:
+        binary = os.environ.get("POWERCONTEXT_CINDY_CODEX_BINARY")
+        if not binary:
+            pytest.skip(
+                "set POWERCONTEXT_CINDY_CODEX_BINARY to an authenticated Codex binary for live model acceptance"
+            )
+        runtime = source / "packages/maker-core/src/agents/codex/app-server"
+        entry = tmp_path / "native-runtime.ts"
+        entry.write_text(
+            f"export {{ AppServerHost }} from {json.dumps(str(runtime / 'host.ts'))};\n"
+            f"export {{ createStdioTransport }} from {json.dumps(str(runtime / 'stdioTransport.ts'))};\n"
+        )
+        build_config = tmp_path / "native-build.mjs"
+        build_config.write_text(
+            "import { readFileSync } from 'node:fs';\n"
+            "import { dirname, resolve } from 'node:path';\n"
+            "export default {\n"
+            f"entry: [{json.dumps(str(entry))}], format: ['esm'], dts: false,\n"
+            f"outDir: {json.dumps(str(tmp_path / 'runtime'))},\n"
+            "plugins: [{ name: 'upstream-raw-prompts',\n"
+            "resolveId(id, importer) { if (id.endsWith('?raw')) return resolve(dirname(importer), id); },\n"
+            "load(id) { if (id.endsWith('?raw')) return 'export default ' + JSON.stringify(readFileSync(id.slice(0, -4), 'utf8')); }\n"
+            "}] };\n"
+        )
+        pnpm = shutil.which("pnpm")
+        assert pnpm is not None, "native Cindy runtime acceptance requires pnpm"
+        subprocess.run(
+            [
+                pnpm,
+                "--dir",
+                str(ROOT / "integrations/dsh/plugins/powercontext"),
+                "exec",
+                "tsdown",
+                "--config",
+                str(build_config),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        native_options = {"nativeRuntime": str(tmp_path / "runtime/native-runtime.mjs"), "codexBinary": binary}
+        if model := os.environ.get("POWERCONTEXT_CINDY_CODEX_MODEL"):
+            native_options["model"] = model
     subprocess.run(
         [sys.executable, str(ROOT / "integrations/cindy/scripts/package.py")], check=True, capture_output=True
     )
@@ -83,10 +131,11 @@ def test_standalone_cindy_hooks_recall_capture_and_isolate_sessions(
                 "url": url,
                 "token": token,
                 "prompt": "What is the Quartz application deployment codename?",
+                **native_options,
             }),
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=240 if native_codex else 20,
             check=True,
         )
         verdicts = json.loads(result.stdout)
@@ -98,8 +147,25 @@ def test_standalone_cindy_hooks_recall_capture_and_isolate_sessions(
         assert "QUARTZ-8413" not in verdicts["second"]["text"]
         assert verdicts["missing"]["action"] == "allow"
         assert verdicts["edited"]["action"] == "allow"
+        assert verdicts["read"]["ok"] is True
+        assert verdicts["read"]["result"]["scope_id"] == scopes[1]
+        assert "QUARTZ-9021" in verdicts["read"]["result"]["result"]["content"]
+        assert "QUARTZ-8413" not in verdicts["read"]["result"]["result"]["content"]
+        assert verdicts["search"]["ok"] is True
+        assert verdicts["search"]["result"]["scope_id"] == scopes[1]
+        assert "QUARTZ-9021" in verdicts["search"]["result"]["result"]["hits"][0]["memory"]["text"]
+        assert verdicts["unboundRead"]["ok"] is False
+        if native_codex:
+            assert len(verdicts["native"]) == 2
+            for receipt, codename, other in zip(
+                verdicts["native"], ("QUARTZ-8413", "QUARTZ-9021"), ("QUARTZ-9021", "QUARTZ-8413"), strict=True
+            ):
+                assert codename in receipt["answer"]
+                assert other not in receipt["answer"]
+            assert verdicts["native"][1]["tool_calls"] >= 1
         async with httpx.AsyncClient(headers={"Authorization": f"Bearer {token}"}) as http_client:
             client = PowerContextClient(url, http_client=http_client)
+            sources = []
             for scope_id in scopes:
                 listed = await client.list_sources(scope_id, ListSourcesRequest(limit=100))
                 captured = [item for item in listed.items if item.source_id.startswith("cindy-user-prompt:")]
@@ -108,5 +174,26 @@ def test_standalone_cindy_hooks_recall_capture_and_isolate_sessions(
                 source_record = await client.get_source(scope_id, "content", record.source_id)
                 assert source_record.content == "What is the Quartz application deployment codename?"
                 assert "powercontext:cindy-context" not in source_record.content
+                sources.append({
+                    "scope_id": scope_id,
+                    "source_id": record.source_id,
+                    "position": record.position,
+                    "original_prompt_verified": True,
+                    "recalled_history_captured": False,
+                })
+        (tmp_path / "cindy-acceptance.json").write_text(
+            json.dumps(
+                {
+                    "cindy_version": "0.1.115",
+                    "mode": "native-codex" if native_codex else "gateway",
+                    "electron_verified": False,
+                    "credential_bridge": "simulated",
+                    "codex_receipts": verdicts.get("native"),
+                    "captured_sources": sources,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
 
     asyncio.run(scenario())

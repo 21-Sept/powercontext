@@ -19,7 +19,7 @@ const { readFileSync } = require('node:fs');
 const { resolve } = require('node:path');
 const { runInNewContext } = require('node:vm');
 const { test } = require('node:test');
-const { runHook, CONTEXT_START } = require('../plugins/powercontext-hooks/node/worker.cjs');
+const { runHook, runReadTool, CONTEXT_START } = require('../plugins/powercontext-hooks/node/worker.cjs');
 const main = readFileSync(resolve(__dirname, '../plugins/powercontext-hooks/main.js'), 'utf8');
 const config = { enabled: true, server_url: 'http://127.0.0.1:8000', scope_id: 'project' };
 const input = { config, session_id: 'session', hook_id: 'event', text: 'What is the deployment codename?' };
@@ -108,7 +108,7 @@ test('a missing binding stops scoped work without falling back or blocking the m
   }));
   await adapter.dispatch(event);
   assert.equal(adapter.sent[0].action, 'allow');
-  await adapter.dispatch({ type: 'tool-call', tool: 'status', callId: 'status' });
+  await adapter.dispatch({ type: 'tool-call', tool: 'status', callId: 'status', args: { session_context: { session_id: 'session' } } });
   assert.equal(adapter.sent[1].result.code, 'scope_binding_target_missing');
 });
 
@@ -118,6 +118,10 @@ test('credentials bound to another URL never reach a network request', async () 
     JSON.stringify({ server_url: 'https://another.example', authorization: 'Bearer synthetic-token' }),
     async () => { contacted = true; return response({}); });
   assert.equal(value.ok, false);
+  const read = await runReadTool({ config: { ...config, auth_mode: 'bearer' }, session_id: 'session', tool: 'resolve_scope' },
+    JSON.stringify({ server_url: 'https://another.example', authorization: 'Bearer synthetic-token' }),
+    async () => { contacted = true; return response({}); });
+  assert.equal(read.ok, false);
   assert.equal(contacted, false);
 });
 
@@ -188,8 +192,66 @@ test('overlapping sessions retain the latest session outcome after an earlier ve
   await adapter.dispatch({ ...event, hookId: 'second-event', data: { ...event.data, sessionId: 'second' } });
   release();
   await first;
-  await adapter.dispatch({ type: 'tool-call', tool: 'status', callId: 'status' });
+  await adapter.dispatch({ type: 'tool-call', tool: 'status', callId: 'status', args: { session_context: { session_id: 'second' } } });
   const result = adapter.sent.at(-1).result;
   assert.equal(result.session_id, 'second');
   assert.equal(result.injection, 'not_applied');
+  await adapter.dispatch({ type: 'tool-call', tool: 'status', callId: 'first-status', args: { session_context: { session_id: 'first' } } });
+  assert.equal(adapter.sent.at(-1).result.session_id, 'first');
+  assert.equal(adapter.sent.at(-1).result.injection, 'verdict_sent');
+});
+
+test('plugin recall works with automatic hooks disabled and shares the hook Scope resolver', async () => {
+  const backend = server();
+  const adapter = host({ ...config, enabled: false }, async request => ({
+    ok: true, result: await runReadTool(request.params, undefined, backend.request),
+  }));
+  await adapter.dispatch({ type: 'tool-call', tool: 'prepare_context', callId: 'read', args: {
+    session_context: { session_id: 'session' }, query: input.text,
+  } });
+  const result = adapter.sent[0];
+  assert.equal(result.ok, true);
+  assert.equal(result.result.scope_id, 'project');
+  assert.equal(result.result.result.content, 'Deployment codename: QUARTZ-8413.');
+  assert.deepEqual(backend.captures, []);
+});
+
+test('plugin reads reject model-selected Scope and connection overrides before contacting the Server', async () => {
+  for (const args of [{ scope_id: 'another', query: 'task' }, { server_url: 'https://another.example', query: 'task' }]) {
+    const result = await runReadTool({ config, session_id: 'session', tool: 'prepare_context', args }, undefined,
+      async () => { assert.fail('must not contact Server'); });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'invalid_arguments');
+  }
+});
+
+test('plugin reads require a trusted session identity and refresh changed bindings', async () => {
+  const request = async () => response({ error: { code: 'scope_binding_target_missing' } }, 409);
+  const read = { config, session_id: 'session', tool: 'resolve_scope' };
+  assert.equal((await runReadTool(read, undefined, server().request)).data.scope_id, 'project');
+  assert.equal((await runReadTool(read, undefined, request)).code, 'scope_binding_target_missing');
+  assert.equal((await runReadTool({ ...read, session_id: undefined }, undefined,
+    async () => { assert.fail('missing session'); })).code, 'session_unavailable');
+});
+
+test('canonical and legacy saved credentials produce the same authenticated hook and read requests', async () => {
+  for (const authorization of ['synthetic-token', 'Bearer synthetic-token']) {
+    const backend = server();
+    const settings = { ...config, auth_mode: 'bearer' };
+    const credential = JSON.stringify({ server_url: config.server_url, authorization });
+    const request = async (url, init) => {
+      assert.equal(init.headers.Authorization, 'Bearer synthetic-token');
+      return backend.request(url, init);
+    };
+    assert.equal((await runHook({ ...input, config: settings }, credential, request)).prepare, 'ready');
+    assert.equal((await runReadTool({ config: settings, session_id: 'session', tool: 'resolve_scope' }, credential, request)).ok, true);
+  }
+});
+
+test('status cannot expose another session outcome', async () => {
+  const adapter = host(config, async () => ({ ok: true, result: { ok: true, prepare: 'empty', capture: 'disabled', scope_id: 'private' } }));
+  await adapter.dispatch(event);
+  await adapter.dispatch({ type: 'tool-call', tool: 'status', callId: 'other', args: { session_context: { session_id: 'other' } } });
+  assert.equal(adapter.sent.at(-1).result.outcome, 'not_observed');
+  assert.equal(adapter.sent.at(-1).result.scope_id, undefined);
 });

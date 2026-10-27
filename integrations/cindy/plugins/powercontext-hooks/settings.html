@@ -36,7 +36,7 @@ limitations under the License.
     <form id="settings">
       <p>Automatic hooks send incoming prompts to your Server and append bounded historical context before dispatch.
         Earlier Ghost rewriters may have changed the incoming text. Cindy displays and saves the rewritten message.
-        Explicit tools use your separate native MCP connection.</p>
+        Plugin recall tools share these connection and Scope settings. Native MCP is configured separately.</p>
       <label class="consent"><input id="enabled" type="checkbox">Enable automatic memory for local Cindy user messages</label>
       <label class="consent"><input id="capture-prompts" type="checkbox" checked>Capture incoming prompts as Sources</label>
       <label>Server URL
@@ -66,8 +66,9 @@ limitations under the License.
         <button type="submit">Save settings</button>
         <button id="clear-token" type="button">Remove saved credential</button>
       </div>
-      <p>Use the same Server URL and Scope as the native MCP connection. Saved settings apply to the next user message.
-        The status tool reports hook outcomes; use the PowerContext CLI to check Server readiness.</p>
+      <p>Saved settings apply to the next hook or plugin recall call. Recall tools work with automatic memory disabled.
+        The status tool reports the current session's hook outcome; use resolve_scope to check its binding and the
+        PowerContext CLI to check Server readiness. Cindy's built-in memory is controlled separately in Cindy settings.</p>
       <p id="status" role="status" aria-live="polite"></p>
     </form>
     <script src="settings.js"></script>

@@ -87,7 +87,7 @@
         // The URL travels inside safeStorage with the token, so partial saves and later
         // configuration changes cannot send an old credential to a different Server.
         await checkedFetch('/secrets/server_credential', {
-          method: 'PUT', body: JSON.stringify({ value: JSON.stringify({ server_url: serverUrl, authorization: token }) }),
+          method: 'PUT', body: JSON.stringify({ value: JSON.stringify({ server_url: serverUrl, authorization: `Bearer ${token}` }) }),
         });
       }
       const maxBytes = Number(element('max-bytes').value);

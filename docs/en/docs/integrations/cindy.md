@@ -1,15 +1,15 @@
 ---
 title: Cindy
-description: Connect Cindy 0.1.104 to the shared PowerContext MCP tools.
+description: Use scoped recall and automatic capture in Cindy 0.1.115, with native MCP for the full tool catalog.
 ---
 
 # Cindy
 
 `experimental`
 
-Cindy connects to the running PowerContext Server through its native custom MCP settings. This uses the same
-Server tool catalog and authorization as other MCP integrations. An optional Ghost adapter provides automatic hooks.
-The compatibility target is [Cindy 0.1.104](https://github.com/makecindy/cindy/releases/tag/v0.1.104).
+Cindy's `powercontext-hooks` Ghost shares one Server connection, credential, and Scope resolver between automatic
+hooks and explicit recall tools. A separate native custom MCP connection provides the full Server tool catalog.
+The compatibility target is [Cindy 0.1.115](https://github.com/makecindy/cindy/releases/tag/v0.1.115).
 
 ## Connect the Server
 
@@ -22,7 +22,10 @@ powercontext service status
 ```
 
 Load the corresponding client connection settings, then run `powercontext ready` and `powercontext capabilities`.
-In Cindy settings, add a custom MCP server with these values:
+Import `powercontext-cindy-hooks-0.1.0.cindy`, open plugin settings, and set the Server URL and optional Bearer token.
+Credentials are stored with their Server URL in Cindy's secret store and injected only into the Node worker.
+
+For explicit writes, Handoffs, reviews, and other Server tools, also add a native custom MCP connection:
 
 | Field | Value |
 | --- | --- |
@@ -39,6 +42,22 @@ See [remote connections](../operate/connect-remote-server.md).
 
 ## Select a Scope and use explicit tools
 
+In plugin settings, select an explicit Server-issued Scope ID, or leave it empty to use the current Cindy session's
+registered binding. The host injects the trusted session identity through `sessionContext`; the model cannot supply
+a different Scope or connection to plugin recall tools. Missing bindings fail the read without selecting a default.
+
+| Plugin tool | Behavior |
+| --- | --- |
+| `status` | Current session ID and latest hook observation; no Server request |
+| `resolve_scope` | Check the current binding against the Server |
+| `prepare_context` | Return bounded, validated PreparedContext as historical evidence |
+| `search_memory` | Search Memory within the same resolved Scope |
+
+These read tools also work with automatic memory disabled. Each invocation resolves the binding again; they do not
+reuse a stale Scope from an earlier message. They never capture the query or perform durable writes.
+
+For the separate native MCP connection:
+
 Inspect existing Scopes through `list_scopes` and `get_scope`. Create one only when requested.
 Call `resolve_scope_binding` with the selected Server-issued `explicit_scope_id` and `allow_default: false`, then
 reuse the returned `scope_id`. A missing or invalid binding stops the memory operation. Do not guess a Scope from
@@ -49,22 +68,22 @@ Memory saves require user intent and result verification. Source capture accepts
 same `source_id` for retries; it does not prove Memory extraction has completed. Handoff and candidate-review
 operations use the same Server tools and approval boundaries as other MCP hosts.
 
-The native MCP connection does not provide a trusted Cindy session identity or workspace path. Explicit tool calls
-use the selected Scope. The automatic adapter receives its trusted session ID from a Host event and resolves the
-Server's Cindy session binding. A workspace binding is not inferred from Agent-authored text.
+The native MCP connection does not provide PowerContext with a trusted Cindy session identity or workspace path.
+Its explicit tool calls must use the selected Scope, which can be checked with the plugin's `resolve_scope` tool.
+The plugin cannot enforce Scope selection on the separate native MCP connection. Keep its Server URL and Scope
+aligned with plugin settings. A workspace binding is not inferred from Agent-authored text.
 
 Retrieved history does not override current instructions. On failure, report the failed operation and continue
 ordinary work from available context. Inspect Server state before retrying an uncertain write.
 
 ## Enable automatic recall and prompt capture
 
-Import `powercontext-cindy-hooks-0.1.0.cindy`, enable the plugin, and open its settings. Use the same Server URL
-and Scope as the native MCP connection, configure the hook credential if needed, and select **Enable automatic
-memory**. Users do not need DSH or additional runtime packages.
+Enable the plugin and select **Enable automatic memory** in its settings. Automatic hooks use the same connection
+and Scope resolver as plugin recall tools. Users do not need DSH or additional runtime packages.
 
 Select an explicit Scope in settings, or leave it empty and have an operator register the Host-issued session ID
 through `set_scope_binding` with `integration: "cindy"` and `kind: "session"`. The plugin `status` tool reports the
-latest observed session ID and hook outcome. Missing bindings allow the original message without memory operations;
+current session ID and its latest observed hook outcome. Missing bindings allow the original message without memory operations;
 they do not trigger Scope creation or default-Scope fallback.
 
 The `will-user-message` hook recalls bounded PreparedContext and independently captures the original prompt as a
@@ -84,8 +103,30 @@ the adapter's historical markers are allowed without recapture or reinjection. F
 Uncertain writes are reported without automatic retry. Local user-message dispatch and steering are covered;
 remote, worker, scheduled, goal-continuation, and pre-compaction flows are not qualified. Use the CLI for Server readiness checks.
 
+## Runtime and built-in memory
+
+Ghost `main.js` runs in a browser sandbox. Cindy starts the bundled Node worker on demand and reuses it; its official
+Node broker owns process management and JSON-RPC forwarding. The worker calls the same PowerContext HTTP operations
+and PreparedContext validator as DSH. No additional bridge server is deployed. `cindy.fetch` requires HTTPS without
+a custom port, so it cannot replace the worker for the default local HTTP Server.
+
+Automatic context uses the supported `will-user-message` rewrite carrier. Plugin recall returns tool results.
+Neither mechanism installs a system prompt or changes Cindy's internal memory. There is no public hook API for
+reusing the separately configured native MCP connection.
+
+Cindy's shared memory and the selected harness's native memory are separate settings. For a PowerContext-only
+evaluation, disable Cindy shared memory and the relevant Claude Code/Codex native-memory switch in Cindy, then use
+a new session. Turning shared memory off alone can restore the harness's native memory. The plugin does not change
+these settings or delete existing memory; previously injected history may remain in existing sessions.
+
 ## Experimental support
 
-Cindy 0.1.104 provider and hook gateway tests cover MCP tools, session isolation, prompt persistence, and
-message rewrites against a real Server. Host credential/message bridges are simulated; desktop installation,
-credential UI, and model execution remain unverified. Cindy is outside the qualified host catalog.
+Cindy 0.1.115 provider and hook gateway tests cover MCP tools, session isolation, prompt persistence, message rewrites,
+and plugin recall against a real Server. Native MCP transport checks cover the provider's direct compatibility path;
+Desktop's default MCP Apps facade is a separate boundary.
+
+An opt-in live check runs the upstream `maker-core` Codex app-server host with an authenticated local Codex binary.
+It checks answers from injected history and an explicit recall tool, then reads captured original prompts back from
+the Server. See the [integration README](https://github.com/oceanbase/powercontext/blob/master/integrations/cindy/README.md) for commands. Host credential/message
+bridges are simulated; Electron installation, secret-store UI, and complete Desktop harness assembly remain unverified.
+Cindy is outside the qualified host catalog.

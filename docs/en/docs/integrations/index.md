@@ -47,9 +47,9 @@ Use the same ref as the Server. `powercontext setup codex dsh` installs, configu
 
 ## Experimental MCP connections
 
-[Cindy](cindy.md) uses its native custom MCP client to access the shared Server tools. It is under evaluation and
-is not counted in the qualified Agent Host list. An optional standalone Ghost adapter adds automatic recall and
-original-prompt capture without requiring DSH.
+[Cindy](cindy.md) offers scoped Ghost recall tools and optional automatic recall and original-prompt capture,
+with a separate native MCP connection for the full Server tool catalog. Users do not need DSH. It remains under
+evaluation and is not counted in the qualified Agent Host list.
 
 ## Python Agent frameworks
 

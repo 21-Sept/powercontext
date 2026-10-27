@@ -44,8 +44,8 @@ powercontext setup
 
 ## 实验性 MCP 接入
 
-[Cindy](cindy.md)通过原生自定义 MCP 客户端访问统一 Server 工具，目前用于评估，不计入已验证 Agent Host 列表。
-可选的独立 Ghost 适配器提供自动召回和原始 Prompt 采集，用户无需安装 DSH。
+[Cindy](cindy.md)提供统一 Scope 的 Ghost 召回工具，以及可选的自动召回和原始 Prompt 采集，
+通过独立原生 MCP 连接访问完整 Server 工具目录。用户无需安装 DSH，目前仍用于评估，不计入已验证 Agent Host 列表。
 
 ## Python Agent 框架
 

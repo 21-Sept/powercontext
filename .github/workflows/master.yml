@@ -568,7 +568,7 @@ jobs:
 
       - name: Check out pinned Cindy provider and gateway source
         run: |
-          git clone --depth 1 --branch v0.1.104 --filter=blob:none --sparse https://github.com/makecindy/cindy.git .cindy-source
+          git clone --depth 1 --branch v0.1.115 --filter=blob:none --sparse https://github.com/makecindy/cindy.git .cindy-source
           git -C .cindy-source sparse-checkout set apps/desktop/src/main/cindy-brain apps/desktop/src/main/mcp-integrations apps/desktop/src/shared
 
       - name: Verify provider and gateway source against a real local Server

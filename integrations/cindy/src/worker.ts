@@ -15,8 +15,8 @@
  */
 import { createHash } from 'node:crypto'
 import { createInterface } from 'node:readline'
-import { PowerContextClient, combineSignals, type FetchFn } from '../../dsh/plugins/powercontext/src/client.ts'
-import { RequestNotSentError, ServerResponseError } from '../../dsh/plugins/powercontext/src/errors.ts'
+import { PowerContextClient, combineSignals, type FetchFn, type JsonObject } from '../../dsh/plugins/powercontext/src/client.ts'
+import { MAX_SOURCE_LENGTH, RequestNotSentError, ServerResponseError } from '../../dsh/plugins/powercontext/src/errors.ts'
 import { validatePreparedContext } from '../../dsh/plugins/powercontext/src/prepared-context.ts'
 import { containsSecret } from '../../dsh/plugins/powercontext/src/secrets.ts'
 import { normalizeServerUrl } from '../../dsh/plugins/powercontext/src/transport.ts'
@@ -35,6 +35,8 @@ type Config = {
   max_bytes?: number
 }
 type HookInput = { config: Config; session_id: string; hook_id: string; text: string; deadline_at?: number }
+type ReadInput = { config: Config; session_id: string; tool: string; args?: JsonObject }
+type ReadOutcome = { ok: boolean; code?: string; data?: unknown }
 type Outcome = {
   ok: boolean
   code?: string
@@ -47,16 +49,47 @@ type Outcome = {
 }
 
 function authorization(config: Config, raw?: string): { baseUrl: string; header?: string } {
+  if (config.allow_insecure_http !== undefined && typeof config.allow_insecure_http !== 'boolean') {
+    throw new Error('invalid_transport_consent')
+  }
   const baseUrl = normalizeServerUrl(config.server_url ?? 'http://127.0.0.1:8000', config.allow_insecure_http ?? false)
   if (config.auth_mode === undefined || config.auth_mode === 'none') return { baseUrl }
   if (config.auth_mode !== 'bearer' || !raw) throw new Error('credential_missing')
   const credential = JSON.parse(raw)
   if (!credential || typeof credential !== 'object'
     || normalizeServerUrl(credential.server_url, config.allow_insecure_http ?? false) !== baseUrl
-    || typeof credential.authorization !== 'string' || !/^Bearer [^\s]+$/.test(credential.authorization)) {
+    || typeof credential.authorization !== 'string') {
     throw new Error('credential_mismatch')
   }
-  return { baseUrl, header: credential.authorization }
+  // Accept the bare token saved by the initial settings UI, as well as the canonical header.
+  const token = credential.authorization.replace(/^Bearer /i, '')
+  if (!/^[\x21-\x7e]+$/.test(token) || token.toLowerCase() === 'bearer') throw new Error('invalid_credential')
+  return { baseUrl, header: `Bearer ${token}` }
+}
+
+function createClient(config: Config, credential?: string, fetchImpl?: FetchFn): PowerContextClient {
+  if (config.scope_id !== undefined && (typeof config.scope_id !== 'string'
+    || !config.scope_id.trim() || config.scope_id.length > 256)) throw new Error('invalid_scope')
+  const connection = authorization(config, credential)
+  return new PowerContextClient({
+    baseUrl: connection.baseUrl,
+    authorization: connection.header,
+    allowInsecureHttp: config.allow_insecure_http ?? false,
+    requestTimeoutMs: 6000,
+    userAgent: 'powercontext-cindy-hooks/0.1.0',
+    fetch: fetchImpl,
+  })
+}
+
+async function resolveScope(client: PowerContextClient, config: Config, sessionId: string, signal: AbortSignal): Promise<string> {
+  const resolved = await client.request('resolve_scope_binding', {
+    allow_default: false,
+    ...(config.scope_id ? { explicit_scope_id: config.scope_id } : {}),
+    binding_keys: [{ integration: 'cindy', kind: 'session', external_id: sessionId }],
+  }, signal)
+  const value = resolved.kind === 'json' ? resolved.value as { scope_id?: unknown } : undefined
+  if (!value || typeof value.scope_id !== 'string' || !value.scope_id.trim()) throw new Error('invalid_scope')
+  return value.scope_id
 }
 
 function failureCode(error: unknown): string {
@@ -67,6 +100,52 @@ function failureCode(error: unknown): string {
     if (error.code === 'scope_not_found') return 'scope_not_found'
   }
   return 'operation_unavailable'
+}
+
+export async function runReadTool(input: ReadInput, credential?: string, fetchImpl?: FetchFn): Promise<ReadOutcome> {
+  if (!input?.config || typeof input.session_id !== 'string' || !input.session_id.trim() || input.session_id.length > 256) {
+    return { ok: false, code: 'session_unavailable' }
+  }
+  const args = input.args ?? {}
+  if (typeof args !== 'object' || Array.isArray(args) || !args
+    || !['resolve_scope', 'prepare_context', 'search_memory'].includes(input.tool)) return { ok: false, code: 'invalid_tool' }
+  const allowed = input.tool === 'resolve_scope' ? []
+    : input.tool === 'prepare_context' ? ['query', 'max_bytes'] : ['query', 'limit', 'mode']
+  if (Object.keys(args).some(key => !allowed.includes(key))) return { ok: false, code: 'invalid_arguments' }
+  if (input.tool !== 'resolve_scope' && (typeof args.query !== 'string' || !args.query.trim() || args.query.length > 8192)) {
+    return { ok: false, code: 'invalid_arguments' }
+  }
+  const maxBytes = args.max_bytes ?? input.config.max_bytes ?? 6000
+  if (input.tool === 'prepare_context' && (!Number.isInteger(maxBytes) || Number(maxBytes) < 512 || Number(maxBytes) > 8192)) {
+    return { ok: false, code: 'invalid_arguments' }
+  }
+  if (input.tool === 'search_memory' && ((args.limit !== undefined
+    && (!Number.isInteger(args.limit) || Number(args.limit) < 1 || Number(args.limit) > 50))
+    || (args.mode !== undefined && !['auto', 'fts', 'vector', 'hybrid'].includes(String(args.mode))))) {
+    return { ok: false, code: 'invalid_arguments' }
+  }
+  let client: PowerContextClient
+  try {
+    const connection = authorization(input.config, credential)
+    if (typeof args.query === 'string' && (containsSecret(args.query)
+      || (connection.header && args.query.includes(connection.header.slice(7)))
+      || /\b(?:Bearer\s+\S+|gh[pousr]_\S+)/.test(args.query))) return { ok: false, code: 'sensitive_content' }
+    client = createClient(input.config, credential, fetchImpl)
+  } catch { return { ok: false, code: 'invalid_connection' } }
+  try {
+    const signal = AbortSignal.timeout(6000)
+    // Resolve on every invocation so a changed or removed binding cannot reuse stale state.
+    const scopeId = await resolveScope(client, input.config, input.session_id, signal)
+    if (input.tool === 'resolve_scope') return { ok: true, data: { scope_id: scopeId } }
+    const response = input.tool === 'prepare_context'
+      ? await client.request('prepare_context', { scope_id: scopeId, query: args.query, max_bytes: maxBytes }, signal)
+      : await client.request('search_memory', { ...args, scope_id: scopeId }, signal)
+    if (response.kind !== 'json') return { ok: false, code: 'invalid_response' }
+    if (input.tool === 'prepare_context') {
+      validatePreparedContext(response.value, undefined, Number(maxBytes))
+    }
+    return { ok: true, data: { scope_id: scopeId, result: response.value } }
+  } catch (error) { return { ok: false, code: failureCode(error) } }
 }
 
 export async function runHook(input: HookInput, credential?: string, fetchImpl?: FetchFn): Promise<Outcome> {
@@ -98,27 +177,15 @@ export async function runHook(input: HookInput, credential?: string, fetchImpl?:
     || (input.config.scope_id !== undefined && (typeof input.config.scope_id !== 'string' || !input.config.scope_id.trim()))) {
     return { ...outcome, ok: false, code: 'invalid_configuration' }
   }
-  const client = new PowerContextClient({
-    baseUrl: connection.baseUrl,
-    authorization: connection.header,
-    allowInsecureHttp: input.config.allow_insecure_http ?? false,
-    requestTimeoutMs: HOOK_BUDGET_MS,
-    userAgent: 'powercontext-cindy-hooks/0.1.0',
-    fetch: fetchImpl,
-  })
+  let client: PowerContextClient
+  try { client = createClient(input.config, credential, fetchImpl) }
+  catch { return { ...outcome, ok: false, code: 'invalid_connection' } }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), remaining)
   try {
     let scopeId: string
     try {
-      const resolved = await client.request('resolve_scope_binding', {
-        allow_default: false,
-        ...(input.config.scope_id ? { explicit_scope_id: input.config.scope_id } : {}),
-        binding_keys: [{ integration: 'cindy', kind: 'session', external_id: input.session_id }],
-      }, controller.signal)
-      const value = resolved.kind === 'json' ? resolved.value as { scope_id?: unknown } : undefined
-      if (!value || typeof value.scope_id !== 'string' || !value.scope_id.trim()) throw new Error('invalid_scope')
-      scopeId = value.scope_id
+      scopeId = await resolveScope(client, input.config, input.session_id, controller.signal)
       outcome.scope_id = scopeId
     } catch (error) { return { ...outcome, ok: false, code: failureCode(error) } }
 
@@ -133,7 +200,7 @@ export async function runHook(input: HookInput, credential?: string, fetchImpl?:
     } catch { outcome.prepare = 'unavailable' }
 
     if (input.config.capture_prompts === false) outcome.capture = 'disabled'
-    else if (input.text.length > 200_000) outcome.capture = 'source_too_long'
+    else if (input.text.length > MAX_SOURCE_LENGTH) outcome.capture = 'source_too_long'
     else {
       const identity = [scopeId, input.session_id, input.hook_id, input.text].join('\0')
       outcome.source_id = `cindy-user-prompt:${createHash('sha256').update(identity).digest('hex')}`
@@ -165,18 +232,21 @@ export async function runHook(input: HookInput, credential?: string, fetchImpl?:
 if (require.main === module) {
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity })
   lines.on('line', async (line) => {
-    let request: { jsonrpc?: string; id?: unknown; method?: string; params?: HookInput; cindy?: { secrets?: Record<string, string> } }
+    let request: { jsonrpc?: string; id?: unknown; method?: string; params?: HookInput | ReadInput; cindy?: { secrets?: Record<string, string> } }
     try { request = JSON.parse(line) }
     catch { return }
     if (request.id === undefined) return
-    let result: Outcome
+    let result: Outcome | ReadOutcome
     try {
-      if (request.jsonrpc !== '2.0' || !['powercontext/hook', 'powercontext/authenticated-hook'].includes(request.method ?? '')) {
+      const methods = ['powercontext/hook', 'powercontext/authenticated-hook', 'powercontext/read', 'powercontext/authenticated-read']
+      if (request.jsonrpc !== '2.0' || !methods.includes(request.method ?? '')) {
         throw new Error('invalid_request')
       }
       const input = request.params!
-      if (input.config.auth_mode === 'bearer' && request.method !== 'powercontext/authenticated-hook') throw new Error('invalid_request')
-      result = await runHook(input, request.cindy?.secrets?.server_credential)
+      if (input.config.auth_mode === 'bearer' && !request.method!.startsWith('powercontext/authenticated-')) throw new Error('invalid_request')
+      result = request.method!.endsWith('read')
+        ? await runReadTool(input as ReadInput, request.cindy?.secrets?.server_credential)
+        : await runHook(input as HookInput, request.cindy?.secrets?.server_credential)
     } catch { result = { ok: false, code: 'hook_unavailable', prepare: 'skipped', capture: 'skipped' } }
     process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: request.id, result })}\n`)
   })

@@ -20,6 +20,7 @@ let node_readline = require("node:readline");
 const REQUEST_ID_HEADER = "X-PowerContext-Request-ID";
 const MAX_RESPONSE_BYTES = 1048576;
 const MAX_CONTEXT_BYTES = 32768;
+const MAX_SOURCE_LENGTH = 2e5;
 const PLUGIN_NAME = "powercontext-dsh";
 const PLUGIN_VERSION = "0.0.2";
 const PLUGIN_USER_AGENT = `${PLUGIN_NAME}/${PLUGIN_VERSION}`;
@@ -1858,15 +1859,44 @@ const CONTEXT_START = "<!-- powercontext:cindy-context:v1 -->";
 const CONTEXT_END = "<!-- /powercontext:cindy-context:v1 -->";
 const HOOK_BUDGET_MS = 1800;
 function authorization(config, raw) {
+	if (config.allow_insecure_http !== void 0 && typeof config.allow_insecure_http !== "boolean") throw new Error("invalid_transport_consent");
 	const baseUrl = normalizeServerUrl(config.server_url ?? "http://127.0.0.1:8000", config.allow_insecure_http ?? false);
 	if (config.auth_mode === void 0 || config.auth_mode === "none") return { baseUrl };
 	if (config.auth_mode !== "bearer" || !raw) throw new Error("credential_missing");
 	const credential = JSON.parse(raw);
-	if (!credential || typeof credential !== "object" || normalizeServerUrl(credential.server_url, config.allow_insecure_http ?? false) !== baseUrl || typeof credential.authorization !== "string" || !/^Bearer [^\s]+$/.test(credential.authorization)) throw new Error("credential_mismatch");
+	if (!credential || typeof credential !== "object" || normalizeServerUrl(credential.server_url, config.allow_insecure_http ?? false) !== baseUrl || typeof credential.authorization !== "string") throw new Error("credential_mismatch");
+	const token = credential.authorization.replace(/^Bearer /i, "");
+	if (!/^[\x21-\x7e]+$/.test(token) || token.toLowerCase() === "bearer") throw new Error("invalid_credential");
 	return {
 		baseUrl,
-		header: credential.authorization
+		header: `Bearer ${token}`
 	};
+}
+function createClient(config, credential, fetchImpl) {
+	if (config.scope_id !== void 0 && (typeof config.scope_id !== "string" || !config.scope_id.trim() || config.scope_id.length > 256)) throw new Error("invalid_scope");
+	const connection = authorization(config, credential);
+	return new PowerContextClient({
+		baseUrl: connection.baseUrl,
+		authorization: connection.header,
+		allowInsecureHttp: config.allow_insecure_http ?? false,
+		requestTimeoutMs: 6e3,
+		userAgent: "powercontext-cindy-hooks/0.1.0",
+		fetch: fetchImpl
+	});
+}
+async function resolveScope(client, config, sessionId, signal) {
+	const resolved = await client.request("resolve_scope_binding", {
+		allow_default: false,
+		...config.scope_id ? { explicit_scope_id: config.scope_id } : {},
+		binding_keys: [{
+			integration: "cindy",
+			kind: "session",
+			external_id: sessionId
+		}]
+	}, signal);
+	const value = resolved.kind === "json" ? resolved.value : void 0;
+	if (!value || typeof value.scope_id !== "string" || !value.scope_id.trim()) throw new Error("invalid_scope");
+	return value.scope_id;
 }
 function failureCode(error) {
 	if (error instanceof ServerResponseError) {
@@ -1876,6 +1906,95 @@ function failureCode(error) {
 		if (error.code === "scope_not_found") return "scope_not_found";
 	}
 	return "operation_unavailable";
+}
+async function runReadTool(input, credential, fetchImpl) {
+	if (!input?.config || typeof input.session_id !== "string" || !input.session_id.trim() || input.session_id.length > 256) return {
+		ok: false,
+		code: "session_unavailable"
+	};
+	const args = input.args ?? {};
+	if (typeof args !== "object" || Array.isArray(args) || !args || ![
+		"resolve_scope",
+		"prepare_context",
+		"search_memory"
+	].includes(input.tool)) return {
+		ok: false,
+		code: "invalid_tool"
+	};
+	const allowed = input.tool === "resolve_scope" ? [] : input.tool === "prepare_context" ? ["query", "max_bytes"] : [
+		"query",
+		"limit",
+		"mode"
+	];
+	if (Object.keys(args).some((key) => !allowed.includes(key))) return {
+		ok: false,
+		code: "invalid_arguments"
+	};
+	if (input.tool !== "resolve_scope" && (typeof args.query !== "string" || !args.query.trim() || args.query.length > 8192)) return {
+		ok: false,
+		code: "invalid_arguments"
+	};
+	const maxBytes = args.max_bytes ?? input.config.max_bytes ?? 6e3;
+	if (input.tool === "prepare_context" && (!Number.isInteger(maxBytes) || Number(maxBytes) < 512 || Number(maxBytes) > 8192)) return {
+		ok: false,
+		code: "invalid_arguments"
+	};
+	if (input.tool === "search_memory" && (args.limit !== void 0 && (!Number.isInteger(args.limit) || Number(args.limit) < 1 || Number(args.limit) > 50) || args.mode !== void 0 && ![
+		"auto",
+		"fts",
+		"vector",
+		"hybrid"
+	].includes(String(args.mode)))) return {
+		ok: false,
+		code: "invalid_arguments"
+	};
+	let client;
+	try {
+		const connection = authorization(input.config, credential);
+		if (typeof args.query === "string" && (containsSecret(args.query) || connection.header && args.query.includes(connection.header.slice(7)) || /\b(?:Bearer\s+\S+|gh[pousr]_\S+)/.test(args.query))) return {
+			ok: false,
+			code: "sensitive_content"
+		};
+		client = createClient(input.config, credential, fetchImpl);
+	} catch {
+		return {
+			ok: false,
+			code: "invalid_connection"
+		};
+	}
+	try {
+		const signal = AbortSignal.timeout(6e3);
+		const scopeId = await resolveScope(client, input.config, input.session_id, signal);
+		if (input.tool === "resolve_scope") return {
+			ok: true,
+			data: { scope_id: scopeId }
+		};
+		const response = input.tool === "prepare_context" ? await client.request("prepare_context", {
+			scope_id: scopeId,
+			query: args.query,
+			max_bytes: maxBytes
+		}, signal) : await client.request("search_memory", {
+			...args,
+			scope_id: scopeId
+		}, signal);
+		if (response.kind !== "json") return {
+			ok: false,
+			code: "invalid_response"
+		};
+		if (input.tool === "prepare_context") validatePreparedContext(response.value, void 0, Number(maxBytes));
+		return {
+			ok: true,
+			data: {
+				scope_id: scopeId,
+				result: response.value
+			}
+		};
+	} catch (error) {
+		return {
+			ok: false,
+			code: failureCode(error)
+		};
+	}
 }
 async function runHook(input, credential, fetchImpl) {
 	const outcome = {
@@ -1919,31 +2038,22 @@ async function runHook(input, credential, fetchImpl) {
 		ok: false,
 		code: "invalid_configuration"
 	};
-	const client = new PowerContextClient({
-		baseUrl: connection.baseUrl,
-		authorization: connection.header,
-		allowInsecureHttp: input.config.allow_insecure_http ?? false,
-		requestTimeoutMs: HOOK_BUDGET_MS,
-		userAgent: "powercontext-cindy-hooks/0.1.0",
-		fetch: fetchImpl
-	});
+	let client;
+	try {
+		client = createClient(input.config, credential, fetchImpl);
+	} catch {
+		return {
+			...outcome,
+			ok: false,
+			code: "invalid_connection"
+		};
+	}
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), remaining);
 	try {
 		let scopeId;
 		try {
-			const resolved = await client.request("resolve_scope_binding", {
-				allow_default: false,
-				...input.config.scope_id ? { explicit_scope_id: input.config.scope_id } : {},
-				binding_keys: [{
-					integration: "cindy",
-					kind: "session",
-					external_id: input.session_id
-				}]
-			}, controller.signal);
-			const value = resolved.kind === "json" ? resolved.value : void 0;
-			if (!value || typeof value.scope_id !== "string" || !value.scope_id.trim()) throw new Error("invalid_scope");
-			scopeId = value.scope_id;
+			scopeId = await resolveScope(client, input.config, input.session_id, controller.signal);
 			outcome.scope_id = scopeId;
 		} catch (error) {
 			return {
@@ -1967,7 +2077,7 @@ async function runHook(input, credential, fetchImpl) {
 			outcome.prepare = "unavailable";
 		}
 		if (input.config.capture_prompts === false) outcome.capture = "disabled";
-		else if (input.text.length > 2e5) outcome.capture = "source_too_long";
+		else if (input.text.length > MAX_SOURCE_LENGTH) outcome.capture = "source_too_long";
 		else {
 			const identity = [
 				scopeId,
@@ -2015,10 +2125,15 @@ if (require.main === module) (0, node_readline.createInterface)({
 	if (request.id === void 0) return;
 	let result;
 	try {
-		if (request.jsonrpc !== "2.0" || !["powercontext/hook", "powercontext/authenticated-hook"].includes(request.method ?? "")) throw new Error("invalid_request");
+		if (request.jsonrpc !== "2.0" || ![
+			"powercontext/hook",
+			"powercontext/authenticated-hook",
+			"powercontext/read",
+			"powercontext/authenticated-read"
+		].includes(request.method ?? "")) throw new Error("invalid_request");
 		const input = request.params;
-		if (input.config.auth_mode === "bearer" && request.method !== "powercontext/authenticated-hook") throw new Error("invalid_request");
-		result = await runHook(input, request.cindy?.secrets?.server_credential);
+		if (input.config.auth_mode === "bearer" && !request.method.startsWith("powercontext/authenticated-")) throw new Error("invalid_request");
+		result = request.method.endsWith("read") ? await runReadTool(input, request.cindy?.secrets?.server_credential) : await runHook(input, request.cindy?.secrets?.server_credential);
 	} catch {
 		result = {
 			ok: false,
@@ -2039,3 +2154,4 @@ exports.CONTEXT_END = CONTEXT_END;
 exports.CONTEXT_START = CONTEXT_START;
 exports.HOOK_BUDGET_MS = HOOK_BUDGET_MS;
 exports.runHook = runHook;
+exports.runReadTool = runReadTool;
