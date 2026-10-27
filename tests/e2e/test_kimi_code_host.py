@@ -21,9 +21,10 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -72,6 +73,7 @@ class ModelGateway(ThreadingHTTPServer):
         self.scope_id = scope_id
         self.requests = []
         self.generation_requests = []
+        self.choose_tool: Callable[..., tuple[str | None, dict[str, Any] | None]] | None = None
 
 
 class ModelHandler(BaseHTTPRequestHandler):
@@ -120,6 +122,8 @@ class ModelHandler(BaseHTTPRequestHandler):
         elif "PC_KIMI_SEARCH" in user_text and not tool_messages:
             tool = "search_memory"
             arguments = {"scope_id": scope_id, "query": "amber", "mode": "fts"}
+        elif self.server.choose_tool is not None:
+            tool, arguments = self.server.choose_tool(body, scope_id, tool_messages)
         delta = {"content": "PC_KIMI_OK"}
         finish = "stop"
         if tool:
@@ -230,22 +234,45 @@ class ModelHandler(BaseHTTPRequestHandler):
 
 
 @contextmanager
-def serving(app):
+def serving(app, *, startup_diagnostic: Path | None = None):
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
+    failure = None
     try:
-        deadline = time.monotonic() + 15
+        started = time.monotonic()
+        deadline = started + 15
         while not server.started and thread.is_alive() and time.monotonic() < deadline:
             time.sleep(0.05)
-        assert server.started
+        if not server.started:
+            frames = []
+            frame = sys._current_frames().get(thread.ident)
+            while frame is not None:
+                frames.append({
+                    "file": Path(frame.f_code.co_filename).name,
+                    "function": frame.f_code.co_name,
+                    "line": frame.f_lineno,
+                })
+                frame = frame.f_back
+            failure = {
+                "startup_seconds": time.monotonic() - started,
+                "thread_alive_before_shutdown": thread.is_alive(),
+                "server_started": server.started,
+                "frames": frames,
+            }
+            if startup_diagnostic is not None:
+                startup_diagnostic.write_text(json.dumps(failure, indent=2) + "\n", encoding="utf-8")
+            assert server.started, json.dumps(failure)
         yield server, f"http://127.0.0.1:{port}", thread
     finally:
         server.should_exit = True
         thread.join(timeout=10)
+        if failure is not None and startup_diagnostic is not None:
+            failure["thread_alive_after_shutdown"] = thread.is_alive()
+            startup_diagnostic.write_text(json.dumps(failure, indent=2) + "\n", encoding="utf-8")
 
 
 @pytest.fixture
@@ -290,7 +317,7 @@ def test_real_kimi_memory_capture_recall_and_fail_open(tmp_path: Path, monkeypat
         scheduler_path=tmp_path / "scheduler",
     )
     with (
-        serving(app) as (server, endpoint, server_thread),
+        serving(app, startup_diagnostic=tmp_path / "server-startup.json") as (server, endpoint, server_thread),
         httpx.Client(
             base_url=endpoint,
             headers={"Authorization": "Bearer kimi-synthetic-server-token"},
@@ -319,7 +346,7 @@ def test_real_kimi_memory_capture_recall_and_fail_open(tmp_path: Path, monkeypat
         )
         installed = install_plugin("kimi-code", source=str(REPOSITORY), server_url=endpoint, scope_id=scope_id)
         install_plugin("kimi-code", source=str(REPOSITORY))
-        diagnostics = KimiInstaller().verify()
+        diagnostics = KimiInstaller().verify(mcp=True)
         assert all(check.ok for check in diagnostics.values()), diagnostics
         command = [node, str(cli)] if cli.suffix in {".mjs", ".js", ".cjs"} else [str(cli)]
         version = subprocess.run([*command, "--version"], capture_output=True, text=True, check=True, timeout=15)

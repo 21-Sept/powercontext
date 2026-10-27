@@ -69,6 +69,7 @@ from powercontext.server.authz import (
     AccessAction,
     AccessAuditContext,
     AccessControlService,
+    CandidateOwnerAttestation,
     PrincipalRef,
     ResourceRef,
     access_control_for_mode,
@@ -79,13 +80,15 @@ from powercontext.server.context import current_principal, current_request_id
 from powercontext.server.cursor_secret import resolve_cursor_secret
 from powercontext.server.dashboard import mount_dashboard
 from powercontext.server.dream_access import DreamAccess
+from powercontext.server.http_limits import HttpResourceLimitsMiddleware
 from powercontext.server.identity import ServerIdentityRepository
 from powercontext.server.info import server_info
-from powercontext.server.logging import WorkerLogging
+from powercontext.server.logging import worker_logging
 from powercontext.server.mcp import mount_mcp
 from powercontext.server.metrics import CONTENT_TYPE_LATEST, HttpMetricsMiddleware, ServerMetrics
 from powercontext.server.middleware import AuthenticationMiddleware
 from powercontext.server.processing_security import build_worker_security
+from powercontext.server.request_id import HttpRequestIdMiddleware
 from powercontext.server.settings import MissingAuthenticationProviderError, ServerSettings
 from powercontext.server.tracing import HttpTracingMiddleware, ServerTracing
 from powercontext.server.worker_tracing import WorkerTracing
@@ -121,7 +124,7 @@ class _MetricsEndpoint:
                 ),
             )
         runtime = request.app.state.application
-        self._metrics.set_processing_families(None if runtime is None else runtime.artifact_processing_supervisor)
+        self._metrics.refresh_runtime(runtime)
         return Response(self._metrics.render(), media_type=CONTENT_TYPE_LATEST)
 
 
@@ -165,7 +168,7 @@ def create_server_app(  # noqa: C901
         inference=resolved.inference,
         external_skills=resolved.external_skills,
     )
-    metrics = ServerMetrics() if resolved.metrics.enabled else None
+    metrics = ServerMetrics(role=resolved.runtime.artifact_processing_role) if resolved.metrics.enabled else None
     resolved_tracing = (
         ServerTracing.context_only(role=resolved.runtime.artifact_processing_role) if tracing is None else tracing
     )
@@ -180,11 +183,21 @@ def create_server_app(  # noqa: C901
             _log_insecure_remote_http_warning()
         if isinstance(config.database, SQLiteConfig) and config.database.is_in_memory:
             _log_in_memory_database_warning()
+        from powercontext.builtin.persistence.migrations.server_readiness import prepare_server_storage
+
+        await asyncio.to_thread(
+            prepare_server_storage,
+            resolved,
+            embedding_profile=None if embedding_model is None else embedding_model.profile,
+        )
         configured_cursor_secret = (
             None if resolved.cursor_signing_secret is None else resolved.cursor_signing_secret.get_secret_value()
         )
         cursor_secret = resolve_cursor_secret(config.database, configured_cursor_secret)
         async with AsyncExitStack() as resources:
+            logging_bootstrap = resources.enter_context(
+                worker_logging(resolved.logging, role=resolved.runtime.artifact_processing_role)
+            )
             active_access_control = configured_access_control
             if active_access_control is None and resolved.access.mode == "enforced":
                 active_access_control = await resources.enter_async_context(
@@ -240,7 +253,7 @@ def create_server_app(  # noqa: C901
                     scheduled_source_runner=scheduled_source_runner,
                     scheduled_experience_runner=scheduled_experience_runner,
                     worker_security=worker_security,
-                    worker_initializer=WorkerLogging(resolved.logging),
+                    worker_initializer=logging_bootstrap,
                     worker_entrypoint_wrapper=WorkerTracing(resolved.tracing).wrap,
                     scheduled_profile_runner=_scheduled_profile_runner(
                         resolved,
@@ -340,6 +353,14 @@ def create_server_app(  # noqa: C901
         authentication_provider=configured_authentication,
         allow_insecure_remote_http=resolved.allow_insecure_http,
     )
+    # Admission must see the outward send; only non-buffering instrumentation
+    # wraps it so early rejections retain the same correlation and observations.
+    app.add_middleware(
+        HttpResourceLimitsMiddleware,
+        max_request_body_bytes=resolved.http.max_request_body_bytes,
+        max_concurrent_requests=resolved.http.max_concurrent_requests,
+    )
+    app.add_middleware(HttpRequestIdMiddleware)
     if metrics is not None:
         app.add_api_route(
             "/metrics",
@@ -455,16 +476,47 @@ def _scheduled_access_runners(
         context = AccessAuditContext(transport="background", operation="incubate_experience_candidates")
         await access.bootstrap_static_scope(principal, scope_id, context=context)
         await access.require(principal, AccessAction.SCOPE_CONTRIBUTE, ResourceRef.scope(scope_id), context=context)
-        result = await runtime.experience.for_scope(scope_id).incubate()
-        for candidate_id in result.candidate_ids:
-            await access.attest_candidate_owner(
-                scope_id=scope_id,
-                candidate_id=candidate_id,
-                family="experience",
-                proposed_owner=principal,
-                target=None,
-                idempotency_key=f"background-candidate-owner:{scope_id}:{candidate_id}",
+
+        async def on_commit(connection, candidates):
+            bound = access.with_connection(connection)
+            await bound.attest_candidate_owners(
+                tuple(
+                    CandidateOwnerAttestation(
+                        scope_id=scope_id,
+                        candidate_id=candidate.candidate_id,
+                        family="experience",
+                        proposed_owner=principal,
+                        target=None
+                        if candidate.target is None
+                        else ResourceRef.artifact(
+                            scope_id,
+                            family=candidate.target.family,
+                            artifact_id=candidate.target.artifact_id,
+                        ),
+                        idempotency_key=f"background-candidate-owner:{scope_id}:{candidate.candidate_id}",
+                    )
+                    for candidate in candidates
+                )
             )
+
+        if runtime.owner_write_database is not None and access.supports_write_transaction(
+            runtime.owner_write_database.engine
+        ):
+            return await runtime.experience.for_scope(scope_id).incubate(on_commit=on_commit)
+        result = await runtime.experience.for_scope(scope_id).incubate()
+        await access.attest_candidate_owners(
+            tuple(
+                CandidateOwnerAttestation(
+                    scope_id=scope_id,
+                    candidate_id=candidate_id,
+                    family="experience",
+                    proposed_owner=principal,
+                    target=None,
+                    idempotency_key=f"background-candidate-owner:{scope_id}:{candidate_id}",
+                )
+                for candidate_id in result.candidate_ids
+            )
+        )
         return result
 
     return (
@@ -708,13 +760,14 @@ async def _server_capabilities(runtime: BuiltinRuntime) -> Capabilities:
 
 
 __all__ = [
+    "create_background_metrics_app",
     "create_server_app",
 ]
 
 
 def create_background_metrics_app(
     settings: ServerSettings,
-    runtime: BuiltinRuntime,
+    runtime: BuiltinRuntime | None,
     metrics: ServerMetrics,
     access_control: AccessControlService | None,
 ) -> FastAPI:
@@ -726,10 +779,12 @@ def create_background_metrics_app(
     app = create_app(
         infrastructure_only=True,
         middleware=middleware,
+        metrics=metrics,
         access_control=access,
         access_mode=settings.access.mode,
         authentication_provider=authentication,
     )
     app.state.application = runtime
-    app.add_api_route("/metrics", _MetricsEndpoint(metrics), include_in_schema=False)
+    if settings.metrics.enabled:
+        app.add_api_route("/metrics", _MetricsEndpoint(metrics), include_in_schema=False)
     return app

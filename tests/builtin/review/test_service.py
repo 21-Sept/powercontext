@@ -25,13 +25,16 @@ from powercontext.builtin.artifacts.atomic_memory import AtomicMemoryContent
 from powercontext.builtin.artifacts.experience import (
     Experience,
     ExperienceContent,
-    ExperienceSearchOutcome,
     FailureRecord,
     FailureSignature,
     FailureVerification,
 )
-from powercontext.builtin.artifacts.skill import Skill, SkillContent, SkillPackageSnapshot, SkillSearchHit
+from powercontext.builtin.artifacts.memory import EmbeddingProfile
+from powercontext.builtin.artifacts.skill import Skill, SkillContent, SkillPackageSnapshot
+from powercontext.builtin.artifacts.topic_memory import TopicMemoryContent
+from powercontext.builtin.inference import EmbeddingResult
 from powercontext.builtin.persistence.errors import RepositoryNotFoundError
+from powercontext.builtin.persistence.experience_index import NoExperienceIndex
 from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
 from powercontext.builtin.persistence.tables import ARTIFACTS_TABLE, BUILTIN_TABLES
 from powercontext.builtin.records import ArtifactWrite
@@ -56,12 +59,14 @@ from powercontext.builtin.runtime import (
     ProposeSkillRequest,
     RejectCandidateRequest,
     ReviseCandidateRequest,
+    open_builtin_contexts,
     open_builtin_runtime,
 )
 from powercontext.builtin.runtime.relational import RelationalContexts
 from powercontext.builtin.scope import ScopeDraft
 from powercontext.builtin.source_eligibility import SourceNotEligibleError
 from powercontext.builtin.sources import ContentCapture
+from powercontext.sources import SourceRef
 
 
 async def _create_scope(runtime: BuiltinRuntime, idempotency_key: str = "project") -> str:
@@ -76,11 +81,52 @@ class _InjectedCandidateStatusError(RuntimeError):
     pass
 
 
+def test_duplicate_candidate_identity_preserves_original_proposal() -> None:
+    async def scenario() -> None:
+        async with open_builtin_contexts(BuiltinConfig(database=SQLiteConfig())) as contexts:
+            scope = await contexts.scopes.create(
+                ScopeDraft(title="Review", summary="Candidate identity", idempotency_key="duplicate-candidate")
+            )
+            source = await contexts.records.capture_source(
+                scope.scope_id, "content", "review-evidence", "Verified result", {}
+            )
+            review = contexts.review(scope.scope_id)
+            proposal = ExperienceContent(
+                situation="A verified task finished.",
+                action="Record the result.",
+                outcome="The next task can use it.",
+                lesson="Keep the verified evidence.",
+            )
+            source_ref = SourceRef(source_type="content", source_id=source.source_id)
+            original = await review.propose_experience(
+                proposal,
+                sources=(source_ref,),
+                artifacts=(),
+                target=None,
+                reason="Verified result",
+                candidate_id="same-candidate",
+            )
+            with pytest.raises(CandidateConflictError):
+                await review.propose_experience(
+                    proposal.model_copy(update={"lesson": "Different instruction."}),
+                    sources=(source_ref,),
+                    artifacts=(),
+                    target=None,
+                    reason="Verified result",
+                    candidate_id="same-candidate",
+                )
+            async with contexts.database.transaction() as connection:
+                stored = await contexts.repositories.candidates.get(connection, scope.scope_id, original.candidate_id)
+            assert stored.proposal == proposal and stored.version == 1
+
+    asyncio.run(scenario())
+
+
 class _InjectedExperienceProjectionError(RuntimeError):
     pass
 
 
-class _FailingExperienceIndex:
+class _FailingExperienceIndex(NoExperienceIndex):
     async def initialize(self, _connection: AsyncConnection, /) -> None:
         pass
 
@@ -96,20 +142,6 @@ class _FailingExperienceIndex:
     ) -> None:
         raise _InjectedExperienceProjectionError
 
-    async def search(
-        self,
-        _connection: AsyncConnection,
-        _scope_id: str,
-        _query: str,
-        _limit: int,
-        /,
-        *,
-        admission: object = None,
-        min_score: float | None = None,
-        require_scores: bool = False,
-    ) -> ExperienceSearchOutcome:
-        return ExperienceSearchOutcome()
-
     async def replace_skill(
         self,
         _connection: AsyncConnection,
@@ -119,20 +151,6 @@ class _FailingExperienceIndex:
         /,
     ) -> None:
         pass
-
-    async def search_skills(
-        self,
-        _connection: AsyncConnection,
-        _scope_id: str,
-        _query: str,
-        _limit: int,
-        /,
-        *,
-        admission: object = None,
-        min_score: float | None = None,
-        require_scores: bool = False,
-    ) -> tuple[SkillSearchHit, ...]:
-        return ()
 
 
 def _proposal(lesson: str = "Regenerate the Client before contract tests.") -> ExperienceContent:
@@ -661,7 +679,8 @@ def test_managed_skill_approval_validates_family_lineage() -> None:
     asyncio.run(scenario())
 
 
-def test_stale_experience_target_keeps_candidate_pending() -> None:
+@pytest.mark.parametrize("rejected", [False, True])
+def test_stale_experience_target_preserves_candidate_decision(rejected: bool) -> None:
     async def scenario() -> None:
         async with open_builtin_runtime(BuiltinConfig(database=SQLiteConfig())) as runtime:
             scope_id = await _create_scope(runtime)
@@ -691,11 +710,17 @@ def test_stale_experience_target_keeps_candidate_pending() -> None:
             )
             winner = await runtime.experience.for_scope(scope_id).propose(replacement_request)
             stale = await runtime.experience.for_scope(scope_id).propose(replacement_request)
+            if rejected:
+                await runtime.review.for_scope(scope_id).reject(
+                    RejectCandidateRequest(
+                        candidate_id=stale.candidate_id, expected_version=1, reason="Do not publish this proposal."
+                    )
+                )
             winner_result = await runtime.review.for_scope(scope_id).approve(
                 ApproveCandidateRequest(candidate_id=winner.candidate_id, expected_version=1)
             )
 
-            with pytest.raises(ArtifactTargetConflictError):
+            with pytest.raises(CandidateTerminalError if rejected else ArtifactTargetConflictError):
                 await runtime.review.for_scope(scope_id).approve(
                     ApproveCandidateRequest(candidate_id=stale.candidate_id, expected_version=1)
                 )
@@ -704,8 +729,81 @@ def test_stale_experience_target_keeps_candidate_pending() -> None:
             )
 
             assert winner_result.result_artifact == approved.result_artifact.model_copy(update={"revision": 2})
-            assert current_stale.status == "pending"
+            assert current_stale.status == ("rejected" if rejected else "pending")
             assert current_stale.version == 1
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("family", ["atomic-memory", "topic-memory"])
+def test_rejected_memory_approval_does_not_request_embeddings(family: str) -> None:
+    class Embedding:
+        profile = EmbeddingProfile(
+            profile_id="review-terminal", model="controlled", dimension=3, distance="l2", normalization="unit"
+        )
+
+        def __init__(self) -> None:
+            self.requests = 0
+
+        async def embed(self, texts: tuple[str, ...], /) -> EmbeddingResult:
+            self.requests += 1
+            return EmbeddingResult(vectors=tuple((1.0, 0.0, 0.0) for _ in texts))
+
+    async def scenario() -> None:
+        embedding = Embedding()
+        async with open_builtin_contexts(BuiltinConfig(database=SQLiteConfig()), embedding_model=embedding) as contexts:
+            scope = await contexts.scopes.create(
+                ScopeDraft(title="Review", summary="Rejected approval", idempotency_key="rejected")
+            )
+            original = (
+                AtomicMemoryContent(kind="task_record", text="The replacement is pending.")
+                if family == "atomic-memory"
+                else TopicMemoryContent(title="Replacement", summary="Pending", detail="The replacement is pending.")
+            )
+            target = await contexts.records.create_artifact(
+                scope.scope_id, family, ArtifactWrite(content=original.model_dump(mode="json", exclude={"creation"}))
+            )
+            context = await contexts.get(scope.scope_id)
+            source, _ = await context.sources.capture(
+                ContentCapture(source_id="progress", content="The replacement has been issued.", metadata={})
+            )
+            source_ref = context.sources.catalog.as_ref(source)
+            service = contexts.review(scope.scope_id)
+            target_ref = ArtifactRef(family=family, artifact_id=target.artifact_id, revision=target.revision)
+            if isinstance(original, AtomicMemoryContent):
+                candidate = await service.propose_memory_dream(
+                    original.model_copy(update={"text": "The replacement has been issued."}),
+                    sources=(source_ref,),
+                    artifacts=(target_ref,),
+                    target=target_ref,
+                    reason="Correct the pending status.",
+                    candidate_id="rejected-memory",
+                )
+            else:
+                candidate = await service.propose_topic_memory_dream(
+                    original.model_copy(update={"summary": "Issued", "detail": "The replacement has been issued."}),
+                    sources=(source_ref,),
+                    artifacts=(target_ref,),
+                    target=target_ref,
+                    reason="Correct the pending status.",
+                    candidate_id="rejected-memory",
+                )
+            await service.reject(candidate.candidate_id, candidate.version, "The evidence does not support this.")
+            before_requests = embedding.requests
+            for expected_version in (candidate.version, candidate.version + 1):
+                with pytest.raises(CandidateTerminalError) as error:
+                    await service.approve(candidate.candidate_id, expected_version)
+                assert error.value.status == "rejected"
+            assert embedding.requests == before_requests
+            current = await service.get_candidate(candidate.candidate_id)
+            assert current.status == "rejected" and current.result_artifact is None
+
+            async def deny_approval(*_args) -> None:
+                raise PermissionError
+
+            service.authorize_action = deny_approval
+            with pytest.raises(PermissionError):
+                await service.approve(candidate.candidate_id, candidate.version)
 
     asyncio.run(scenario())
 
