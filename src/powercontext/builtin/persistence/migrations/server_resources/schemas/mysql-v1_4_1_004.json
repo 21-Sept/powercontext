@@ -3,7 +3,7 @@
   "revisions": {
     "v1_4_1_004": {
       "statements": [
-        "CREATE TABLE pc_access_owner_recovery (\n\toperation_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, \n\tdeployment_id VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, \n\tscope_id VARCHAR(256) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, \n\tcompleted TINYINT(1) NOT NULL, \n\tpayload TEXT NOT NULL, \n\tPRIMARY KEY (operation_id), \n\tCONSTRAINT uq_pc_access_owner_recovery_pending UNIQUE (deployment_id, completed, operation_id)\n)"
+        "CREATE TABLE pc_access_owner_recovery (\n\toperation_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, \n\tdeployment_id VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, \n\tscope_id VARCHAR(256) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, \n\tcompleted TINYINT(1) NOT NULL, \n\tpayload TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, \n\tPRIMARY KEY (operation_id), \n\tCONSTRAINT uq_pc_access_owner_recovery_pending UNIQUE (deployment_id, completed, operation_id)\n)"
       ],
       "changes": [
         {
@@ -68,8 +68,8 @@
                 ],
                 "nullable": false,
                 "default": null,
-                "charset": null,
-                "collation": null,
+                "charset": "utf8mb4",
+                "collation": "utf8mb4_bin",
                 "extra": []
               }
             },

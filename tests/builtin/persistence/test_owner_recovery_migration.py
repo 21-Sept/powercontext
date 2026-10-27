@@ -24,7 +24,10 @@ import pytest
 from powercontext.builtin.artifacts.memory import EmbeddingProfile
 from powercontext.builtin.persistence.migrations.bundle import MigrationBundle
 from powercontext.builtin.persistence.migrations.deployment import server_bundle
+from powercontext.builtin.persistence.migrations.models import MigrationError
+from powercontext.builtin.persistence.migrations.mysql_schema import MySQLSchema
 from powercontext.builtin.persistence.migrations.sqlite import SQLiteMigrationRunner
+from tests.builtin.persistence.test_mysql_migration_schema import _inventory, _ReflectedDatabase
 from tests.builtin.persistence.test_portable_storage_migration import apply, configuration
 
 
@@ -71,3 +74,43 @@ def test_registered_owner_recovery_upgrade_preserves_history_and_revision_checks
     fresh = SQLiteMigrationRunner(tmp_path / "fresh.db", current, configuration=configuration(embedding))
     apply(fresh)
     assert upgraded.plan().schema_fingerprint == fresh.plan().schema_fingerprint
+
+
+@pytest.mark.parametrize("damage", [None, "payload-collation", "pending-index"])
+def test_owner_recovery_mysql_registration_matches_native_character_and_key_definitions(damage):
+    # Simulated SHOW output checks normalization, not execution on a native backend.
+    definition = """CREATE TABLE `pc_access_owner_recovery` (
+      `operation_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+      `deployment_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+      `scope_id` varchar(256) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+      `completed` tinyint(1) NOT NULL,
+      `payload` text CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+      PRIMARY KEY (`operation_id`),
+      UNIQUE KEY `uq_pc_access_owner_recovery_pending` (`deployment_id`,`completed`,`operation_id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"""
+    bundle = server_bundle()
+    inventory = {"tables": {}, "views": [], "triggers": []}
+    for revision in bundle.revisions[:-1]:
+        path = bundle.directory / f"schemas/mysql-{revision}.json"
+        fragment = json.loads(path.read_text(encoding="utf-8"))
+        for change in fragment["revisions"][revision]["changes"]:
+            for name, table in change.items():
+                if table is None:
+                    del inventory["tables"][name]
+                else:
+                    inventory["tables"][name] = table
+    table = _inventory(_ReflectedDatabase({"pc_access_owner_recovery": definition}))["tables"][
+        "pc_access_owner_recovery"
+    ]
+    inventory["tables"]["pc_access_owner_recovery"] = table
+    if damage == "payload-collation":
+        table["columns"]["payload"]["collation"] = "utf8mb4_general_ci"
+    elif damage == "pending-index":
+        table["indexes"] = {}
+    schema = MySQLSchema(bundle)
+    if damage is None:
+        schema.verify(inventory, "v1_4_1_004")
+        assert schema.identify(inventory) == "v1_4_1_004"
+    else:
+        with pytest.raises(MigrationError, match="incompatible_schema"):
+            schema.verify(inventory, "v1_4_1_004")
