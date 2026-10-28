@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1320" viewBox="0 0 1000 1320" role="img" aria-labelledby="title desc" lang="zh">
+<title id="title">记忆写入与维护，各自有依据</title><desc id="desc">写入检查可选；引用、版本和容量校验始终有效。</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9" fill="none" stroke="#5c6a7c" stroke-width="1.5"/></marker></defs>
+<style>text{font-family:Arial,'PingFang SC','Microsoft YaHei',sans-serif;fill:#14213a}.muted{fill:#5c6a7c}</style>
+<rect width="1000" height="1320" rx="18" fill="#f7f5ef"/>
+<text x="48" y="40" font-size="18" font-weight="700" style="fill:#1769d2">PowerContext  /  v1.2.0</text>
+<text x="48" y="88" font-size="34" font-weight="700" style="fill:#14213a">记忆写入与维护，各自有依据</text>
+<text x="48" y="126" font-size="20" font-weight="400" style="fill:#5c6a7c">写入检查可选；引用、版本和容量校验始终有效。</text>
+<rect x="48" y="162" width="280" height="158" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="72" y="192" font-size="17" font-weight="700" style="fill:#1769d2">01</text>
+<text x="72" y="230" font-size="25" font-weight="700" style="fill:#14213a">候选记忆</text>
+<text x="72" y="263" font-size="20" font-weight="400" style="fill:#5c6a7c">内容 + 引用证据</text>
+<text x="72" y="292" font-size="20" font-weight="400" style="fill:#5c6a7c">规则、决策与观察</text>
+<rect x="376" y="162" width="576" height="158" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="400" y="192" font-size="17" font-weight="700" style="fill:#1769d2">02</text>
+<text x="400" y="230" font-size="25" font-weight="700" style="fill:#14213a">可选检查 · DecisionModel</text>
+<text x="400" y="263" font-size="20" font-weight="400" style="fill:#5c6a7c">问题：引用证据是否不足以支持候选记忆？</text>
+<text x="400" y="292" font-size="20" font-weight="400" style="fill:#5c6a7c">默认关闭；下方展示 v1.2.0 的默认结果映射。</text>
+<path d="M 328 241 H 376" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 664 320 V 354 H 188 V 390" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 664 354 H 500 V 390" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 664 354 H 812 V 390" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="48" y="390" width="280" height="152" rx="14" fill="#fbf0f0" stroke="#cbd3dc"/>
+<text x="72" y="432" font-size="25" font-weight="700" style="fill:#14213a">yes → HOLD</text>
+<text x="72" y="465" font-size="20" font-weight="400" style="fill:#5c6a7c">证据不足</text>
+<text x="72" y="494" font-size="20" font-weight="400" style="fill:#5c6a7c">暂停本次写入</text>
+<rect x="360" y="390" width="280" height="152" rx="14" fill="#eef6f2" stroke="#cbd3dc"/>
+<text x="384" y="432" font-size="25" font-weight="700" style="fill:#14213a">no → ACCEPT</text>
+<text x="384" y="465" font-size="20" font-weight="400" style="fill:#5c6a7c">继续常规流程</text>
+<text x="384" y="494" font-size="20" font-weight="400" style="fill:#5c6a7c">仍需通过确定性校验</text>
+<rect x="672" y="390" width="280" height="152" rx="14" fill="#edf2f8" stroke="#cbd3dc"/>
+<text x="696" y="432" font-size="25" font-weight="700" style="fill:#14213a">abstain → ACCEPT</text>
+<text x="696" y="465" font-size="20" font-weight="400" style="fill:#5c6a7c">或判断服务故障</text>
+<text x="696" y="494" font-size="20" font-weight="400" style="fill:#5c6a7c">继续常规流程</text>
+<path d="M 500 542 V 650" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 812 542 V 620 H 500" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="48" y="650" width="904" height="180" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="72" y="680" font-size="17" font-weight="700" style="fill:#1769d2">03</text>
+<text x="72" y="718" font-size="25" font-weight="700" style="fill:#14213a">常规校验与容量检查</text>
+<text x="72" y="751" font-size="20" font-weight="400" style="fill:#5c6a7c">默认上限：有效条目 5,000 · 当前清单条目 10,000 · 清单 4 MiB</text>
+<text x="72" y="780" font-size="20" font-weight="400" style="fill:#5c6a7c">超过容量 → 409 memory_capacity_exceeded；通过后成为当前有效记忆。</text>
+<text x="72" y="809" font-size="20" font-weight="400" style="fill:#5c6a7c">未启用模型检查时，直接进入常规流程；模型故障也不会绕过这些校验。</text>
+<text x="48" y="872" font-size="27" font-weight="700" style="fill:#14213a">保存后维护：改变当前状态，保留历史</text>
+<rect x="48" y="902" width="280" height="170" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="72" y="944" font-size="25" font-weight="700" style="fill:#14213a">显式修订</text>
+<text x="72" y="977" font-size="20" font-weight="400" style="fill:#5c6a7c">创建新版本</text>
+<text x="72" y="1006" font-size="20" font-weight="400" style="fill:#5c6a7c">新版本参与检索</text>
+<text x="72" y="1035" font-size="20" font-weight="400" style="fill:#5c6a7c">旧版本继续保留</text>
+<rect x="360" y="902" width="280" height="170" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="384" y="944" font-size="25" font-weight="700" style="fill:#14213a">显式停用</text>
+<text x="384" y="977" font-size="20" font-weight="400" style="fill:#5c6a7c">退出日常检索</text>
+<text x="384" y="1006" font-size="20" font-weight="400" style="fill:#5c6a7c">历史正文不删除</text>
+<text x="384" y="1035" font-size="20" font-weight="400" style="fill:#5c6a7c">精确引用继续保留</text>
+<rect x="672" y="902" width="280" height="170" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="696" y="944" font-size="25" font-weight="700" style="fill:#14213a">可选清单压缩</text>
+<text x="696" y="977" font-size="20" font-weight="400" style="fill:#5c6a7c">默认关闭，先预览</text>
+<text x="696" y="1006" font-size="20" font-weight="400" style="fill:#5c6a7c">仅清理符合条件的停用项</text>
+<text x="696" y="1035" font-size="20" font-weight="400" style="fill:#5c6a7c">不删除历史正文与版本</text>
+<rect x="48" y="1104" width="904" height="84" rx="14" fill="#edf2f8" stroke="#cbd3dc"/>
+<text x="72" y="1146" font-size="25" font-weight="700" style="fill:#14213a">历史正文、Revision 与精确引用始终保留</text>
+<text x="48" y="1238" font-size="17" font-weight="400" style="fill:#5c6a7c">配置阈值后，低置信度的 HOLD 方向结果可降为 FLAG：继续写入并标记不确定。</text>
+<text x="48" y="1265" font-size="17" font-weight="400" style="fill:#5c6a7c">容量针对当前 Memory 清单，不等于底层数据库大小。</text>
+<text x="48" y="1292" font-size="17" font-weight="400" style="fill:#5c6a7c">压缩后的停用条目不能再通过激活恢复；历史内容仍可追溯。</text>
+</svg>

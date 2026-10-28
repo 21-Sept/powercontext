@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="483" viewBox="0 0 1000 483" lang="en" role="img" aria-labelledby="title"><title id="title">LoCoMo: versus full context</title><rect width="1000" height="483" rx="18" fill="#f7f5ef"/><style>text{font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif;fill:#14213a}</style>
+<text x="48" y="43" font-size="18" font-weight="700" style="fill:#1769d2">PowerContext</text>
+<text x="48" y="88" font-size="30" font-weight="700" style="fill:#14213a">LoCoMo: versus full context</text>
+<rect x="48.0" y="156" width="285.3333333333333" height="227" rx="14" fill="white" stroke="#cbd3dc"/>
+<text x="72.0" y="198" font-size="22" font-weight="700" style="fill:#1769d2">+37.88 percentage</text>
+<text x="72.0" y="228" font-size="22" font-weight="700" style="fill:#1769d2">points</text>
+<text x="72.0" y="280" font-size="20" font-weight="400" style="fill:#14213a">Higher</text>
+<text x="72.0" y="309" font-size="20" font-weight="400" style="fill:#14213a">question-answering</text>
+<text x="72.0" y="338" font-size="20" font-weight="400" style="fill:#14213a">accuracy.</text>
+<rect x="357.3333333333333" y="156" width="285.3333333333333" height="227" rx="14" fill="white" stroke="#cbd3dc"/>
+<text x="381.3333333333333" y="198" font-size="22" font-weight="700" style="fill:#1769d2">About −91.9%</text>
+<text x="381.3333333333333" y="250" font-size="20" font-weight="400" style="fill:#14213a">Lower search p95</text>
+<text x="381.3333333333333" y="279" font-size="20" font-weight="400" style="fill:#14213a">latency.</text>
+<rect x="666.6666666666666" y="156" width="285.3333333333333" height="227" rx="14" fill="white" stroke="#cbd3dc"/>
+<text x="690.6666666666666" y="198" font-size="22" font-weight="700" style="fill:#1769d2">About −93.7%</text>
+<text x="690.6666666666666" y="250" font-size="20" font-weight="400" style="fill:#14213a">Fewer answer tokens</text>
+<text x="690.6666666666666" y="279" font-size="20" font-weight="400" style="fill:#14213a">per question; not</text>
+<text x="690.6666666666666" y="308" font-size="20" font-weight="400" style="fill:#14213a">total system cost.</text>
+</svg>

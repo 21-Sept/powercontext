@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1320" viewBox="0 0 1000 1320" role="img" aria-labelledby="title desc" lang="en">
+<title id="title">Evidence-aware memory writes and maintenance</title><desc id="desc">The model check is optional; citation, version and capacity validation still applies.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9" fill="none" stroke="#5c6a7c" stroke-width="1.5"/></marker></defs>
+<style>text{font-family:Arial,'PingFang SC','Microsoft YaHei',sans-serif;fill:#14213a}.muted{fill:#5c6a7c}</style>
+<rect width="1000" height="1320" rx="18" fill="#f7f5ef"/>
+<text x="48" y="40" font-size="18" font-weight="700" style="fill:#1769d2">PowerContext  /  v1.2.0</text>
+<text x="48" y="88" font-size="34" font-weight="700" style="fill:#14213a">Evidence-aware memory writes and maintenance</text>
+<text x="48" y="126" font-size="20" font-weight="400" style="fill:#5c6a7c">The model check is optional; citation, version and capacity validation still applies.</text>
+<rect x="48" y="162" width="280" height="158" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="72" y="192" font-size="17" font-weight="700" style="fill:#1769d2">01</text>
+<text x="72" y="230" font-size="25" font-weight="700" style="fill:#14213a">Candidate memory</text>
+<text x="72" y="263" font-size="20" font-weight="400" style="fill:#5c6a7c">Content + cited evidence</text>
+<text x="72" y="292" font-size="20" font-weight="400" style="fill:#5c6a7c">Rules / decisions / facts</text>
+<rect x="376" y="162" width="576" height="158" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="400" y="192" font-size="17" font-weight="700" style="fill:#1769d2">02</text>
+<text x="400" y="230" font-size="25" font-weight="700" style="fill:#14213a">Optional check · DecisionModel</text>
+<text x="400" y="263" font-size="20" font-weight="400" style="fill:#5c6a7c">Does the evidence fail to support this memory?</text>
+<text x="400" y="292" font-size="20" font-weight="400" style="fill:#5c6a7c">Opt-in; v1.2.0 default mapping shown below.</text>
+<path d="M 328 241 H 376" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 664 320 V 354 H 188 V 390" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 664 354 H 500 V 390" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 664 354 H 812 V 390" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="48" y="390" width="280" height="152" rx="14" fill="#fbf0f0" stroke="#cbd3dc"/>
+<text x="72" y="432" font-size="25" font-weight="700" style="fill:#14213a">yes → HOLD</text>
+<text x="72" y="465" font-size="20" font-weight="400" style="fill:#5c6a7c">Evidence is insufficient</text>
+<text x="72" y="494" font-size="20" font-weight="400" style="fill:#5c6a7c">Hold the write</text>
+<rect x="360" y="390" width="280" height="152" rx="14" fill="#eef6f2" stroke="#cbd3dc"/>
+<text x="384" y="432" font-size="25" font-weight="700" style="fill:#14213a">no → ACCEPT</text>
+<text x="384" y="465" font-size="20" font-weight="400" style="fill:#5c6a7c">Continue normal flow</text>
+<text x="384" y="494" font-size="20" font-weight="400" style="fill:#5c6a7c">Validation still applies</text>
+<rect x="672" y="390" width="280" height="152" rx="14" fill="#edf2f8" stroke="#cbd3dc"/>
+<text x="696" y="432" font-size="25" font-weight="700" style="fill:#14213a">abstain → ACCEPT</text>
+<text x="696" y="465" font-size="20" font-weight="400" style="fill:#5c6a7c">Also on model fallback</text>
+<text x="696" y="494" font-size="20" font-weight="400" style="fill:#5c6a7c">Continue normal flow</text>
+<path d="M 500 542 V 650" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 812 542 V 620 H 500" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="48" y="650" width="904" height="180" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="72" y="680" font-size="17" font-weight="700" style="fill:#1769d2">03</text>
+<text x="72" y="718" font-size="25" font-weight="700" style="fill:#14213a">Normal validation and capacity checks</text>
+<text x="72" y="751" font-size="20" font-weight="400" style="fill:#5c6a7c">Default limits: 5,000 active entries · 10,000 manifest entries · 4 MiB manifest</text>
+<text x="72" y="780" font-size="20" font-weight="400" style="fill:#5c6a7c">Over capacity → 409 memory_capacity_exceeded; valid writes become active memory.</text>
+<text x="72" y="809" font-size="20" font-weight="400" style="fill:#5c6a7c">Disabled checks skip the model, not validation. Model failure does not bypass it.</text>
+<text x="48" y="872" font-size="27" font-weight="700" style="fill:#14213a">After saving: change current state, preserve history</text>
+<rect x="48" y="902" width="280" height="170" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="72" y="944" font-size="25" font-weight="700" style="fill:#14213a">Revise</text>
+<text x="72" y="977" font-size="20" font-weight="400" style="fill:#5c6a7c">Create a new version</text>
+<text x="72" y="1006" font-size="20" font-weight="400" style="fill:#5c6a7c">Retrieve the new version</text>
+<text x="72" y="1035" font-size="20" font-weight="400" style="fill:#5c6a7c">Preserve the old version</text>
+<rect x="360" y="902" width="280" height="170" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="384" y="944" font-size="25" font-weight="700" style="fill:#14213a">Deactivate</text>
+<text x="384" y="977" font-size="20" font-weight="400" style="fill:#5c6a7c">Leave ordinary retrieval</text>
+<text x="384" y="1006" font-size="20" font-weight="400" style="fill:#5c6a7c">Keep historical content</text>
+<text x="384" y="1035" font-size="20" font-weight="400" style="fill:#5c6a7c">Retain exact citations</text>
+<rect x="672" y="902" width="280" height="170" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="696" y="944" font-size="25" font-weight="700" style="fill:#14213a">Compact manifest</text>
+<text x="696" y="977" font-size="20" font-weight="400" style="fill:#5c6a7c">Opt-in; preview first</text>
+<text x="696" y="1006" font-size="20" font-weight="400" style="fill:#5c6a7c">Eligible inactive items only</text>
+<text x="696" y="1035" font-size="20" font-weight="400" style="fill:#5c6a7c">Keep historical versions</text>
+<rect x="48" y="1104" width="904" height="84" rx="14" fill="#edf2f8" stroke="#cbd3dc"/>
+<text x="72" y="1146" font-size="25" font-weight="700" style="fill:#14213a">Historical bodies, Revisions and exact citations remain</text>
+<text x="48" y="1238" font-size="17" font-weight="400" style="fill:#5c6a7c">With a threshold, a low-confidence hold verdict becomes FLAG: write and mark uncertain.</text>
+<text x="48" y="1265" font-size="17" font-weight="400" style="fill:#5c6a7c">Capacity measures the current Memory manifest, not the size of the underlying database.</text>
+<text x="48" y="1292" font-size="17" font-weight="400" style="fill:#5c6a7c">Compacted inactive entries cannot be reactivated; their historical content remains traceable.</text>
+</svg>

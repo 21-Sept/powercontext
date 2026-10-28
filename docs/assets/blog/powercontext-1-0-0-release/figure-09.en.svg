@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="837" viewBox="0 0 1000 837" lang="en" role="img" aria-labelledby="title"><title id="title">How context follows the work</title><rect width="1000" height="837" rx="18" fill="#f7f5ef"/><style>text{font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif;fill:#14213a}</style>
+<text x="48" y="43" font-size="18" font-weight="700" style="fill:#1769d2">PowerContext</text>
+<text x="48" y="88" font-size="30" font-weight="700" style="fill:#14213a">How context follows the work</text>
+<rect x="48.0" y="156" width="440.0" height="168" rx="14" fill="white" stroke="#cbd3dc"/>
+<text x="72.0" y="198" font-size="22" font-weight="700" style="fill:#1769d2">01 Bring in evidence</text>
+<text x="72.0" y="250" font-size="20" font-weight="400" style="fill:#14213a">Code, documents, tickets, traces</text>
+<text x="72.0" y="279" font-size="20" font-weight="400" style="fill:#14213a">and human input become Source.</text>
+<rect x="512.0" y="156" width="440.0" height="168" rx="14" fill="white" stroke="#cbd3dc"/>
+<text x="536.0" y="198" font-size="22" font-weight="700" style="fill:#1769d2">02 Preserve decisions</text>
+<text x="536.0" y="250" font-size="20" font-weight="400" style="fill:#14213a">Memory keeps reusable conclusions</text>
+<text x="536.0" y="279" font-size="20" font-weight="400" style="fill:#14213a">with provenance.</text>
+<rect x="48.0" y="348" width="440.0" height="197" rx="14" fill="white" stroke="#cbd3dc"/>
+<text x="72.0" y="390" font-size="22" font-weight="700" style="fill:#1769d2">03 Assemble on demand</text>
+<text x="72.0" y="442" font-size="20" font-weight="400" style="fill:#14213a">PreparedContext selects cited</text>
+<text x="72.0" y="471" font-size="20" font-weight="400" style="fill:#14213a">evidence by Scope, relevance and</text>
+<text x="72.0" y="500" font-size="20" font-weight="400" style="fill:#14213a">budget.</text>
+<rect x="512.0" y="348" width="440.0" height="197" rx="14" fill="white" stroke="#cbd3dc"/>
+<text x="536.0" y="390" font-size="22" font-weight="700" style="fill:#1769d2">04 Hand off work</text>
+<text x="536.0" y="442" font-size="20" font-weight="400" style="fill:#14213a">Handoff carries the goal, progress,</text>
+<text x="536.0" y="471" font-size="20" font-weight="400" style="fill:#14213a">blockers and next step.</text>
+<rect x="48.0" y="569" width="440.0" height="168" rx="14" fill="white" stroke="#cbd3dc"/>
+<text x="72.0" y="611" font-size="22" font-weight="700" style="fill:#1769d2">05 Review for reuse</text>
+<text x="72.0" y="663" font-size="20" font-weight="400" style="fill:#14213a">Reviewed Experience and Skill</text>
+<text x="72.0" y="692" font-size="20" font-weight="400" style="fill:#14213a">candidates support future tasks.</text>
+</svg>

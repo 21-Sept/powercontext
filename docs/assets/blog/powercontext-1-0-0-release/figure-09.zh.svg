@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="837" viewBox="0 0 1000 837" lang="zh" role="img" aria-labelledby="title"><title id="title">上下文如何沿着工作流转</title><rect width="1000" height="837" rx="18" fill="#f7f5ef"/><style>text{font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif;fill:#14213a}</style>
+<text x="48" y="43" font-size="18" font-weight="700" style="fill:#1769d2">PowerContext</text>
+<text x="48" y="88" font-size="30" font-weight="700" style="fill:#14213a">上下文如何沿着工作流转</text>
+<rect x="48.0" y="156" width="440.0" height="168" rx="14" fill="white" stroke="#cbd3dc"/>
+<text x="72.0" y="198" font-size="22" font-weight="700" style="fill:#1769d2">01 接入证据</text>
+<text x="72.0" y="250" font-size="20" font-weight="400" style="fill:#14213a">代码、文档、工单、轨迹和人工输入成</text>
+<text x="72.0" y="279" font-size="20" font-weight="400" style="fill:#14213a">为 Source。</text>
+<rect x="512.0" y="156" width="440.0" height="168" rx="14" fill="white" stroke="#cbd3dc"/>
+<text x="536.0" y="198" font-size="22" font-weight="700" style="fill:#1769d2">02 沉淀判断</text>
+<text x="536.0" y="250" font-size="20" font-weight="400" style="fill:#14213a">Memory 保存可复用结论及其来源。</text>
+<rect x="48.0" y="348" width="440.0" height="197" rx="14" fill="white" stroke="#cbd3dc"/>
+<text x="72.0" y="390" font-size="22" font-weight="700" style="fill:#1769d2">03 按需组装</text>
+<text x="72.0" y="442" font-size="20" font-weight="400" style="fill:#14213a">PreparedContext 按 Scope、相关性和</text>
+<text x="72.0" y="471" font-size="20" font-weight="400" style="fill:#14213a">预算组织引用。</text>
+<rect x="512.0" y="348" width="440.0" height="197" rx="14" fill="white" stroke="#cbd3dc"/>
+<text x="536.0" y="390" font-size="22" font-weight="700" style="fill:#1769d2">04 交接工作</text>
+<text x="536.0" y="442" font-size="20" font-weight="400" style="fill:#14213a">Handoff 携带目标、进展、阻塞与下一</text>
+<text x="536.0" y="471" font-size="20" font-weight="400" style="fill:#14213a">步。</text>
+<rect x="48.0" y="569" width="440.0" height="168" rx="14" fill="white" stroke="#cbd3dc"/>
+<text x="72.0" y="611" font-size="22" font-weight="700" style="fill:#1769d2">05 审核复用</text>
+<text x="72.0" y="663" font-size="20" font-weight="400" style="fill:#14213a">经验与技能候选经审核后服务未来任务</text>
+<text x="72.0" y="692" font-size="20" font-weight="400" style="fill:#14213a">。</text>
+</svg>

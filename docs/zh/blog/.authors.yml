@@ -1,0 +1,24 @@
+authors:
+  dinah-zhang:
+    name: Dinah Zhang
+    description: CNCF 大使
+    avatar: assets/blog/authors/dinah-zhang.png
+    socials:
+      github: zhanghuidinah
+      x: dinah_zhang
+  chojan-shang:
+    name: Chojan Shang
+    description: Apache 软件基金会成员
+    avatar: assets/blog/authors/chojan-shang.png
+    socials:
+      github: PsiACE
+      x: psiace
+  jingshun:
+    name: Tanner
+    avatar: assets/blog/authors/jingshun.jpg
+    socials:
+      github: hidb4ai
+  jackie-cqz:
+    name: jackie-cqz
+    description: PowerContext 贡献者
+    avatar: assets/blog/authors/jackie-cqz.jpg

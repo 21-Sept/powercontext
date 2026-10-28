@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="512" viewBox="0 0 1000 512" lang="zh" role="img" aria-labelledby="title"><title id="title">围绕工作组织上下文</title><rect width="1000" height="512" rx="18" fill="#f7f5ef"/><style>text{font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif;fill:#14213a}</style>
+<text x="48" y="43" font-size="18" font-weight="700" style="fill:#1769d2">PowerContext</text>
+<text x="48" y="88" font-size="30" font-weight="700" style="fill:#14213a">围绕工作组织上下文</text>
+<rect x="48.0" y="156" width="285.3333333333333" height="256" rx="14" fill="white" stroke="#cbd3dc"/>
+<text x="72.0" y="198" font-size="22" font-weight="700" style="fill:#1769d2">围绕工作</text>
+<text x="72.0" y="250" font-size="20" font-weight="400" style="fill:#14213a">目标、进展和证据保持</text>
+<text x="72.0" y="279" font-size="20" font-weight="400" style="fill:#14213a">关联。</text>
+<rect x="357.3333333333333" y="156" width="285.3333333333333" height="256" rx="14" fill="white" stroke="#cbd3dc"/>
+<text x="381.3333333333333" y="198" font-size="22" font-weight="700" style="fill:#1769d2">面向行动</text>
+<text x="381.3333333333333" y="250" font-size="20" font-weight="400" style="fill:#14213a">明确下一步与需要先确</text>
+<text x="381.3333333333333" y="279" font-size="20" font-weight="400" style="fill:#14213a">认的事项。</text>
+<rect x="666.6666666666666" y="156" width="285.3333333333333" height="256" rx="14" fill="white" stroke="#cbd3dc"/>
+<text x="690.6666666666666" y="198" font-size="22" font-weight="700" style="fill:#1769d2">人机共享</text>
+<text x="690.6666666666666" y="250" font-size="20" font-weight="400" style="fill:#14213a">不同视图引用同一版本</text>
+<text x="690.6666666666666" y="279" font-size="20" font-weight="400" style="fill:#14213a">的可核对材料。</text>
+</svg>

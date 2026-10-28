@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="482" viewBox="0 0 1000 482" lang="zh" role="img" aria-labelledby="title"><title id="title">工作不应在交接时中断</title><rect width="1000" height="482" rx="18" fill="#f7f5ef"/><style>text{font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif;fill:#14213a}</style>
+<text x="48" y="43" font-size="18" font-weight="700" style="fill:#1769d2">PowerContext</text>
+<text x="48" y="88" font-size="30" font-weight="700" style="fill:#14213a">工作不应在交接时中断</text>
+<rect x="48.0" y="156" width="285.3333333333333" height="226" rx="14" fill="white" stroke="#cbd3dc"/>
+<text x="72.0" y="198" font-size="22" font-weight="700" style="fill:#1769d2">昨天</text>
+<text x="72.0" y="250" font-size="20" font-weight="400" style="fill:#14213a">修改代码、运行测试、</text>
+<text x="72.0" y="279" font-size="20" font-weight="400" style="fill:#14213a">排除方案。</text>
+<rect x="357.3333333333333" y="156" width="285.3333333333333" height="226" rx="14" fill="white" stroke="#cbd3dc"/>
+<text x="381.3333333333333" y="198" font-size="22" font-weight="700" style="fill:#1769d2">交接</text>
+<text x="381.3333333333333" y="250" font-size="20" font-weight="400" style="fill:#14213a">保留目标、判断依据和</text>
+<text x="381.3333333333333" y="279" font-size="20" font-weight="400" style="fill:#14213a">已验证进展。</text>
+<rect x="666.6666666666666" y="156" width="285.3333333333333" height="226" rx="14" fill="white" stroke="#cbd3dc"/>
+<text x="690.6666666666666" y="198" font-size="22" font-weight="700" style="fill:#1769d2">今天</text>
+<text x="690.6666666666666" y="250" font-size="20" font-weight="400" style="fill:#14213a">新的人或 Agent 核对证</text>
+<text x="690.6666666666666" y="279" font-size="20" font-weight="400" style="fill:#14213a">据，从下一步继续。</text>
+</svg>

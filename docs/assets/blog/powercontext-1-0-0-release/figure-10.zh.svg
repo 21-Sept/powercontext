@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="490" viewBox="0 0 1000 490" lang="zh" role="img" aria-labelledby="title"><title id="title">LoCoMo：准确率、延迟与回答用量</title><rect width="1000" height="490" rx="18" fill="#f7f5ef"/><style>text{font-family:Arial,"PingFang SC",sans-serif;fill:#14213a}</style>
+<text x="48" y="44" font-size="18">PowerContext</text>
+<text x="48" y="95" font-size="30">LoCoMo：准确率、延迟与回答用量</text>
+<text x="48" y="157" font-size="18">配置</text>
+<text x="330" y="157" font-size="18">准确率</text>
+<text x="510" y="157" font-size="18">搜索 p95</text>
+<text x="720" y="157" font-size="18">回答 Token / 题</text>
+<path d="M 48 236 H 952" stroke="#cbd3dc"/>
+<text x="48" y="211" font-size="21">PowerContext</text>
+<text x="330" y="211" font-size="21">90.78%</text>
+<text x="510" y="211" font-size="21">1.38 s</text>
+<text x="720" y="211" font-size="21">≈ 1.65k</text>
+<path d="M 48 307 H 952" stroke="#cbd3dc"/>
+<text x="48" y="282" font-size="21">PowerMem</text>
+<text x="330" y="282" font-size="21">87.79%</text>
+<text x="510" y="282" font-size="21">1.44 s</text>
+<text x="720" y="282" font-size="21">≈ 0.9k</text>
+<path d="M 48 378 H 952" stroke="#cbd3dc"/>
+<text x="48" y="353" font-size="21">完整上下文</text>
+<text x="330" y="353" font-size="21">52.9%</text>
+<text x="510" y="353" font-size="21">17.12 s</text>
+<text x="720" y="353" font-size="21">26k</text>
+<text x="48" y="431" font-size="16">1,540 道计分题；回答 Token 不包含记忆提取、存储和检索的总成本。</text>
+</svg>

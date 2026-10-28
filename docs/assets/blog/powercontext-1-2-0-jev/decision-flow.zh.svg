@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1130" viewBox="0 0 1000 1130" role="img" aria-labelledby="title desc" lang="zh">
+<title id="title">用项目证据检查候选方案</title><desc id="desc">应用编排流程；模型判断与实际测试分别记录。</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9" fill="none" stroke="#5c6a7c" stroke-width="1.5"/></marker></defs>
+<style>text{font-family:Arial,'PingFang SC','Microsoft YaHei',sans-serif;fill:#14213a}.muted{fill:#5c6a7c}</style>
+<rect width="1000" height="1130" rx="18" fill="#f7f5ef"/>
+<text x="48" y="40" font-size="18" font-weight="700" style="fill:#1769d2">PowerContext  /  v1.2.0</text>
+<text x="48" y="88" font-size="34" font-weight="700" style="fill:#14213a">用项目证据检查候选方案</text>
+<text x="48" y="126" font-size="20" font-weight="400" style="fill:#5c6a7c">应用编排流程；模型判断与实际测试分别记录。</text>
+<rect x="48" y="162" width="280" height="142" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="72" y="192" font-size="17" font-weight="700" style="fill:#1769d2">01</text>
+<text x="72" y="230" font-size="25" font-weight="700" style="fill:#14213a">Memory</text>
+<text x="72" y="263" font-size="20" font-weight="400" style="fill:#5c6a7c">已确认的项目规则</text>
+<text x="72" y="292" font-size="20" font-weight="400" style="fill:#5c6a7c">保留来源与引用</text>
+<rect x="376" y="162" width="576" height="142" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="400" y="192" font-size="17" font-weight="700" style="fill:#1769d2">02</text>
+<text x="400" y="230" font-size="25" font-weight="700" style="fill:#14213a">PreparedContext</text>
+<text x="400" y="263" font-size="20" font-weight="400" style="fill:#5c6a7c">召回相关记录，核对引用</text>
+<text x="400" y="292" font-size="20" font-weight="400" style="fill:#5c6a7c">把项目依据明确传给生成与检查环节</text>
+<path d="M 328 233 H 376" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 664 304 V 340 H 258 V 376" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 664 340 H 742 V 376" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="48" y="376" width="420" height="180" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="72" y="418" font-size="25" font-weight="700" style="fill:#14213a">Coding Agent</text>
+<text x="72" y="451" font-size="20" font-weight="400" style="fill:#5c6a7c">当前任务 + 项目背景</text>
+<text x="72" y="480" font-size="20" font-weight="400" style="fill:#5c6a7c">沿用原有生成模型</text>
+<text x="72" y="509" font-size="20" font-weight="400" style="fill:#5c6a7c">产出候选代码或方案</text>
+<rect x="532" y="376" width="420" height="180" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="556" y="418" font-size="25" font-weight="700" style="fill:#14213a">DecisionModel</text>
+<text x="556" y="451" font-size="20" font-weight="400" style="fill:#5c6a7c">问题 + 候选方案 + 项目证据</text>
+<text x="556" y="480" font-size="20" font-weight="400" style="fill:#5c6a7c">Runtime → SystemOne 适配器</text>
+<text x="556" y="509" font-size="20" font-weight="400" style="fill:#5c6a7c">Jev / Laya</text>
+<path d="M 468 474 H 532" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 258 556 V 638" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="274" y="602" font-size="18" font-weight="400" style="fill:#14213a">候选代码</text>
+<path d="M 742 556 V 638" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="758" y="602" font-size="18" font-weight="400" style="fill:#14213a">模型意见</text>
+<rect x="48" y="638" width="420" height="172" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="72" y="680" font-size="25" font-weight="700" style="fill:#14213a">独立测试</text>
+<text x="72" y="713" font-size="20" font-weight="400" style="fill:#5c6a7c">执行真实代码</text>
+<text x="72" y="742" font-size="20" font-weight="400" style="fill:#5c6a7c">核对实际行为与预期结果</text>
+<text x="72" y="771" font-size="20" font-weight="400" style="fill:#5c6a7c">模型意见不替代测试</text>
+<rect x="532" y="638" width="420" height="172" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="556" y="680" font-size="25" font-weight="700" style="fill:#14213a">yes / no / abstain</text>
+<text x="556" y="713" font-size="20" font-weight="400" style="fill:#5c6a7c">符合 / 不符合 / 无法确定</text>
+<text x="556" y="742" font-size="20" font-weight="400" style="fill:#5c6a7c">超时或后端失败 → abstain</text>
+<text x="556" y="771" font-size="20" font-weight="400" style="fill:#5c6a7c">不会自动修改候选代码</text>
+<path d="M 258 810 V 844 H 500 V 876" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 742 810 V 844 H 500" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="48" y="876" width="904" height="136" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="72" y="918" font-size="25" font-weight="700" style="fill:#14213a">应用汇总观察，再写回 Memory</text>
+<text x="72" y="951" font-size="20" font-weight="400" style="fill:#5c6a7c">规则、模型意见、测试结果分别保留，供后续任务召回。</text>
+<text x="72" y="980" font-size="20" font-weight="400" style="fill:#5c6a7c">应用显式控制召回、判断与写回；接入模型不等于自动拥有项目历史。</text>
+<text x="48" y="1102" font-size="17" font-weight="400" style="fill:#5c6a7c">接入示例流程 · DecisionModel 由应用调用，生成模型独立配置。</text>
+</svg>

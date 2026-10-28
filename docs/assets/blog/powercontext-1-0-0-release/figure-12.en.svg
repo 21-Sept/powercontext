@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="490" viewBox="0 0 1000 490" lang="en" role="img" aria-labelledby="title"><title id="title">SWE-bench Pro: task resolution rate</title><rect width="1000" height="490" rx="18" fill="#f7f5ef"/><style>text{font-family:Arial,"PingFang SC",sans-serif;fill:#14213a}</style>
+<text x="48" y="44" font-size="18">PowerContext</text>
+<text x="48" y="95" font-size="30">SWE-bench Pro: task resolution rate</text>
+<text x="48" y="157" font-size="18">Configuration</text>
+<text x="330" y="157" font-size="18">Resolved</text>
+<text x="510" y="157" font-size="18">Resolution rate</text>
+<text x="720" y="157" font-size="18">Versus OFF</text>
+<path d="M 48 236 H 952" stroke="#cbd3dc"/>
+<text x="48" y="211" font-size="21">PowerContext OFF</text>
+<text x="330" y="211" font-size="21">602 / 731</text>
+<text x="510" y="211" font-size="21">82.35%</text>
+<text x="720" y="211" font-size="21">—</text>
+<path d="M 48 307 H 952" stroke="#cbd3dc"/>
+<text x="48" y="282" font-size="21">PowerContext ON</text>
+<text x="330" y="282" font-size="21">634 / 731</text>
+<text x="510" y="282" font-size="21">86.73%</text>
+<text x="720" y="282" font-size="21">+32</text>
+<path d="M 48 378 H 952" stroke="#cbd3dc"/>
+<text x="48" y="353" font-size="21">Difference</text>
+<text x="330" y="353" font-size="21">+32</text>
+<text x="510" y="353" font-size="21">+4.38 pp</text>
+<text x="720" y="353" font-size="21">—</text>
+<text x="48" y="431" font-size="16">public v2 · Codex · gpt-5.6-sol · medium; system-level results, not an official leaderboard submission.</text>
+</svg>

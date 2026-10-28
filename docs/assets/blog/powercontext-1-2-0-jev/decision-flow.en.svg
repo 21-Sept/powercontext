@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1130" viewBox="0 0 1000 1130" role="img" aria-labelledby="title desc" lang="en">
+<title id="title">Review proposals with project evidence</title><desc id="desc">The application orchestrates review and records test results separately.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9" fill="none" stroke="#5c6a7c" stroke-width="1.5"/></marker></defs>
+<style>text{font-family:Arial,'PingFang SC','Microsoft YaHei',sans-serif;fill:#14213a}.muted{fill:#5c6a7c}</style>
+<rect width="1000" height="1130" rx="18" fill="#f7f5ef"/>
+<text x="48" y="40" font-size="18" font-weight="700" style="fill:#1769d2">PowerContext  /  v1.2.0</text>
+<text x="48" y="88" font-size="34" font-weight="700" style="fill:#14213a">Review proposals with project evidence</text>
+<text x="48" y="126" font-size="20" font-weight="400" style="fill:#5c6a7c">The application orchestrates review and records test results separately.</text>
+<rect x="48" y="162" width="280" height="142" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="72" y="192" font-size="17" font-weight="700" style="fill:#1769d2">01</text>
+<text x="72" y="230" font-size="25" font-weight="700" style="fill:#14213a">Memory</text>
+<text x="72" y="263" font-size="20" font-weight="400" style="fill:#5c6a7c">Established project rules</text>
+<text x="72" y="292" font-size="20" font-weight="400" style="fill:#5c6a7c">Sources and citations</text>
+<rect x="376" y="162" width="576" height="142" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="400" y="192" font-size="17" font-weight="700" style="fill:#1769d2">02</text>
+<text x="400" y="230" font-size="25" font-weight="700" style="fill:#14213a">PreparedContext</text>
+<text x="400" y="263" font-size="20" font-weight="400" style="fill:#5c6a7c">Recall relevant records and verify their citations.</text>
+<text x="400" y="292" font-size="20" font-weight="400" style="fill:#5c6a7c">Explicitly pass evidence to generation and review.</text>
+<path d="M 328 233 H 376" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 664 304 V 340 H 258 V 376" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 664 340 H 742 V 376" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="48" y="376" width="420" height="180" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="72" y="418" font-size="25" font-weight="700" style="fill:#14213a">Coding Agent</text>
+<text x="72" y="451" font-size="20" font-weight="400" style="fill:#5c6a7c">Current task + project context</text>
+<text x="72" y="480" font-size="20" font-weight="400" style="fill:#5c6a7c">Keep the existing generation model</text>
+<text x="72" y="509" font-size="20" font-weight="400" style="fill:#5c6a7c">Produce candidate code or a proposal</text>
+<rect x="532" y="376" width="420" height="180" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="556" y="418" font-size="25" font-weight="700" style="fill:#14213a">DecisionModel</text>
+<text x="556" y="451" font-size="20" font-weight="400" style="fill:#5c6a7c">Question + proposal + evidence</text>
+<text x="556" y="480" font-size="20" font-weight="400" style="fill:#5c6a7c">Runtime → SystemOne adapter</text>
+<text x="556" y="509" font-size="20" font-weight="400" style="fill:#5c6a7c">Jev / Laya</text>
+<path d="M 468 474 H 532" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 258 556 V 638" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="274" y="602" font-size="18" font-weight="400" style="fill:#14213a">Candidate code</text>
+<path d="M 742 556 V 638" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="758" y="602" font-size="18" font-weight="400" style="fill:#14213a">Assessment</text>
+<rect x="48" y="638" width="420" height="172" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="72" y="680" font-size="25" font-weight="700" style="fill:#14213a">Independent tests</text>
+<text x="72" y="713" font-size="20" font-weight="400" style="fill:#5c6a7c">Execute the actual code</text>
+<text x="72" y="742" font-size="20" font-weight="400" style="fill:#5c6a7c">Check behavior against expectations</text>
+<text x="72" y="771" font-size="20" font-weight="400" style="fill:#5c6a7c">A model verdict does not replace tests</text>
+<rect x="532" y="638" width="420" height="172" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="556" y="680" font-size="25" font-weight="700" style="fill:#14213a">yes / no / abstain</text>
+<text x="556" y="713" font-size="20" font-weight="400" style="fill:#5c6a7c">Meets rules / does not / uncertain</text>
+<text x="556" y="742" font-size="20" font-weight="400" style="fill:#5c6a7c">Timeout or backend failure → abstain</text>
+<text x="556" y="771" font-size="20" font-weight="400" style="fill:#5c6a7c">Does not automatically change code</text>
+<path d="M 258 810 V 844 H 500 V 876" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 742 810 V 844 H 500" fill="none" stroke="#5c6a7c" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="48" y="876" width="904" height="136" rx="14" fill="#ffffff" stroke="#cbd3dc"/>
+<text x="72" y="918" font-size="25" font-weight="700" style="fill:#14213a">The application records observations in Memory</text>
+<text x="72" y="951" font-size="20" font-weight="400" style="fill:#5c6a7c">Keep rules, model assessments and test results distinct for later recall.</text>
+<text x="72" y="980" font-size="20" font-weight="400" style="fill:#5c6a7c">The application controls recall, review and writeback; history is not automatic.</text>
+<text x="48" y="1102" font-size="17" font-weight="400" style="fill:#5c6a7c">Example integration flow · The application calls DecisionModel; generation is configured separately.</text>
+</svg>
