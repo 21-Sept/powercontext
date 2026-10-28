@@ -90,7 +90,6 @@ def test_blog_language_is_consistent_in_text_examples_and_diagrams() -> None:
         "deepseek-harness-powercontext/dsh-web.png",
         "deepseek-harness-powercontext/plugin-list.png",
         "deepseek-harness-powercontext/pc-command.png",
-        "powercontext-1-0-0-release/figure-17.png",  # Original contributor montage.
     }
     han = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
     for language in ("en", "zh"):
