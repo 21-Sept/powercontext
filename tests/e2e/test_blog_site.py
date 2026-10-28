@@ -1,19 +1,54 @@
+#
+# Copyright (c) 2026 OceanBase.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Exercise bilingual publishing and the exported blog, alongside original site pages."""
 
 from __future__ import annotations
 
 import html
 import json
+import os
 import re
 import shutil
 import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 WEBSITE = ROOT / "website"
 
 
+@pytest.fixture(scope="module")
+def built_blog_site() -> None:
+    required = [
+        WEBSITE / "node_modules/.bin/tsx",
+        WEBSITE / ".generated/blog.json",
+        WEBSITE / "out/en/blog/index.html",
+        WEBSITE / "out/zh/blog/index.html",
+    ]
+    if shutil.which("pnpm") and all(path.is_file() for path in required):
+        return
+    message = "Blog export tests require pnpm and a successful make docs-test build."
+    if os.environ.get("POWERCONTEXT_TEST_BLOG_SITE") == "1":
+        pytest.fail(message)
+    pytest.skip(message)
+
+
+@pytest.mark.usefixtures("built_blog_site")
 def test_full_size_figure_links_require_exported_image_files() -> None:
     pnpm = shutil.which("pnpm")
     assert pnpm
@@ -33,12 +68,14 @@ def test_full_size_figure_links_require_exported_image_files() -> None:
         assert missing_url in result.stderr
 
 
+@pytest.mark.usefixtures("built_blog_site")
 def test_blog_i18n_pagination_and_publishing_contract() -> None:
     pnpm = shutil.which("pnpm")
     assert pnpm
     subprocess.run([pnpm, "exec", "tsx", "--test", "tests/blog.test.ts"], cwd=WEBSITE, check=True)
 
 
+@pytest.mark.usefixtures("built_blog_site")
 def test_exported_blog_and_original_pages() -> None:
     content = json.loads((WEBSITE / ".generated/blog.json").read_text(encoding="utf-8"))
     for language in ("en", "zh"):
