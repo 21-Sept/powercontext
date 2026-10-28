@@ -359,6 +359,19 @@ def native_candidates(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, P
     return outputs[0], outputs[1], inputs, expected
 
 
+def test_native_preparation_uses_canonical_lock_bytes() -> None:
+    selected = os.environ.get("POWERCONTEXT_RESOURCE_TEST_INPUTS")
+    if not selected:
+        pytest.skip("requires explicitly prepared native pinned inputs")
+    inputs = Path(selected).resolve()
+    metadata = json.loads((inputs / "inputs.json").read_bytes())
+    content = (inputs / "requirements.lock").read_bytes()
+    # The consumer compares this hash-bound wire format byte for byte. Windows
+    # text-mode CRLF translation must not change otherwise identical inputs.
+    assert content and content.endswith(b"\n") and b"\r" not in content
+    assert hashlib.sha256(content).hexdigest() == metadata["requirements_sha256"]
+
+
 def test_native_producer_is_deterministic_and_preserves_immutable_output(native_candidates) -> None:
     first, second, inputs, expected = native_candidates
     for path in (

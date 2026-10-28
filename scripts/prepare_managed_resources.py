@@ -511,6 +511,7 @@ def prepare(args: argparse.Namespace) -> None:  # noqa: C901 - ordered acquisiti
                 for p in closure
             ),
             encoding="utf-8",
+            newline="\n",
         )
         metadata = {
             "format_version": 1,
