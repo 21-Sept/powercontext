@@ -143,15 +143,21 @@ else:
   return dict(operation_id=op,attempt=attempt,phase='finished' if result else 'executing',executor=dict(pid=os.getpid(),observation='not_confirmed_exited'),execution_state='finished' if result else 'unknown',outcome=result['outcome'] if result else 'pending',cancel_requested=cancel.exists(),result=result,observation=components,history=[dict(attempt=n,outcome=None if n<attempt else (result['outcome'] if result else None)) for n in range(1,attempt+1)],recovery_actions=[] if result else ['inspect','preflight'])
  if action in ('apply','resume'):
   n=request.get('expected_attempt',0)+1;save(status(attempt=n))
-  print(json.dumps(dict(protocol_version=1,request_id=request['request_id'],type='accepted',operation_id=op,attempt=n)),flush=True)
-  print(json.dumps(dict(protocol_version=1,request_id=request['request_id'],type='progress',operation_id=op,attempt=n,sequence=1,phase='service')),flush=True)
-  if behavior in ('await_cancel','await_release'):
-   signal=cancel if behavior=='await_cancel' else root/(op+'.test-release')
-   deadline=time.monotonic()+10
-   while not signal.exists() and time.monotonic()<deadline:time.sleep(0.01)
-   assert signal.exists(), 'test synchronization timed out'
-  else:time.sleep(0.4 if behavior!='slow' else 0.9)
-  result=dict(outcome='cancelled' if cancel.exists() else 'succeeded',components=components)
+  if behavior=='broken_progress':
+   reader,writer=os.pipe();os.close(reader);os.dup2(writer,1);os.close(writer)
+  try:
+   print(json.dumps(dict(protocol_version=1,request_id=request['request_id'],type='accepted',operation_id=op,attempt=n)),flush=True)
+   print(json.dumps(dict(protocol_version=1,request_id=request['request_id'],type='progress',operation_id=op,attempt=n,sequence=1,phase='service')),flush=True)
+  except BrokenPipeError:
+   result=dict(outcome='failed',error=dict(code='progress_unavailable'))
+  else:
+   if behavior in ('await_cancel','await_release'):
+    signal=cancel if behavior=='await_cancel' else root/(op+'.test-release')
+    deadline=time.monotonic()+10
+    while not signal.exists() and time.monotonic()<deadline:time.sleep(0.01)
+    assert signal.exists(), 'test synchronization timed out'
+   else:time.sleep(0.4 if behavior!='slow' else 0.9)
+   result=dict(outcome='cancelled' if cancel.exists() else 'succeeded',components=components)
   final=status(result,n);save(final);emit(**final)
  elif not file.exists():
   emit(outcome='rejected',error=dict(code='operation_missing'));sys.exit(1)
@@ -315,8 +321,37 @@ fn lost_response_keeps_reference_and_helper_finishes_without_replay() {
         reply.operation_id
     );
     let status = await_terminal_status(&reopened, &reply.operation_id);
-    assert_eq!(status.outcome, OpsOutcome::Succeeded);
+    // A slow interpreter can lose the pipe before progress is delivered. Like
+    // real Ops, that is a durable pre-mutation failure, not perpetual pending.
+    match status.outcome {
+        OpsOutcome::Succeeded => {}
+        OpsOutcome::Failed => assert_eq!(
+            status.status.unwrap().result.unwrap().error,
+            Some(OpsErrorCode::ProgressUnavailable)
+        ),
+        other => panic!("unexpected terminal outcome: {other:?}"),
+    }
     assert_eq!(status.attempt, Some(1));
+}
+
+#[test]
+fn broken_progress_pipe_records_failure_and_can_be_queried_without_replay() {
+    let f = Fixture::new();
+    f.behavior("broken_progress");
+    let host = f.host();
+    let reply = host.apply(f.approve(&host), |_| {}).unwrap();
+    assert_eq!(reply.outcome, OpsOutcome::Unknown);
+    let reopened = f.host();
+    let references = reopened.references().unwrap();
+    assert_eq!(references.operations.len(), 1);
+    assert_eq!(references.operations[0].operation_id, reply.operation_id);
+    let status = await_terminal_status(&reopened, &reply.operation_id);
+    assert_eq!(status.outcome, OpsOutcome::Failed);
+    assert_eq!(status.attempt, Some(1));
+    assert_eq!(
+        status.status.unwrap().result.unwrap().error,
+        Some(OpsErrorCode::ProgressUnavailable)
+    );
 }
 
 fn await_terminal_status(host: &OpsHost, operation_id: &str) -> OpsOperationReply {
