@@ -527,7 +527,8 @@ def _validate_physical_value(option: str, value: str) -> None:
         "engine": {"innodb"},
         "using": {"btree"},
         "organization": {"index", "heap"},
-        "fts_index_type": {"match"},
+        # PHRASE_MATCH also supports the term matching used by the registered layouts.
+        "fts_index_type": {"match", "phrase_match"},
     }
     if option in supported and value not in supported[option]:
         raise MigrationError("incompatible_schema", "An unsupported table engine or index organization was discovered.")

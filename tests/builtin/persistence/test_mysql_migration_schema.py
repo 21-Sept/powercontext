@@ -325,7 +325,22 @@ def test_released_fulltext_keys_preserve_search_semantics_in_the_inventory() -> 
         }
 
 
-@pytest.mark.parametrize("option", ["", "FTS_INDEX_TYPE = MATCH", "fts_index_type=match"])
+def test_native_oceanbase_phrase_match_preserves_released_fulltext_inventory() -> None:
+    path = Path(__file__).parents[2] / "fixtures/database_migrations/schemas/oceanbase_4_6_3_1_fulltext.json"
+    tables = json.loads(path.read_text(encoding="utf-8"))["tables"]
+    assert _inventory(_ReflectedDatabase(tables)) == _inventory(_ReflectedDatabase(_released_fulltext_tables()))
+
+
+@pytest.mark.parametrize(
+    "option",
+    [
+        "",
+        "FTS_INDEX_TYPE = MATCH",
+        "fts_index_type=match",
+        "FTS_INDEX_TYPE = PHRASE_MATCH",
+        "fts_index_type=phrase_match",
+    ],
+)
 def test_oceanbase_fulltext_reflection_preserves_server_baseline_and_recovery(option: str) -> None:
     bundle = server_bundle()
     statements = json.loads((bundle.snapshot_directory / "schemas/mysql-s1300.json").read_text())["revisions"]["s1300"][
@@ -333,7 +348,7 @@ def test_oceanbase_fulltext_reflection_preserves_server_baseline_and_recovery(op
     ]
     tables = {statement.split("`", 2)[1]: statement for statement in statements if statement.startswith("CREATE TABLE")}
     expected = _inventory(_ReflectedDatabase(tables))
-    # Replay the extra SHOW CREATE option reported by OceanBase 4.6.0.1 in #2283.
+    # Replay MATCH reported by OceanBase 4.6.0.1 and PHRASE_MATCH captured on 4.6.3.1.
     # This models reflection; it is not live OceanBase acceptance.
     reflected = {
         name: ddl.replace(
@@ -357,7 +372,13 @@ def test_oceanbase_fulltext_reflection_preserves_server_baseline_and_recovery(op
 
 
 @pytest.mark.parametrize(
-    "option", ["FTS_INDEX_TYPE = UNKNOWN", "FTS_INDEX_TYPE =", "FTS_INDEX_TYPE = MATCH FUTURE_OPTION=1"]
+    "option",
+    [
+        "FTS_INDEX_TYPE = UNKNOWN",
+        "FTS_INDEX_TYPE =",
+        "FTS_INDEX_TYPE = MATCH FUTURE_OPTION=1",
+        "FTS_INDEX_TYPE = PHRASE_MATCH FUTURE_OPTION=1",
+    ],
 )
 def test_unknown_or_incomplete_fulltext_storage_options_are_rejected(option: str) -> None:
     tables = _released_fulltext_tables()
@@ -381,7 +402,7 @@ def test_unknown_or_incomplete_fulltext_storage_options_are_rejected(option: str
         ("ix_pc_artifact_heads_fts", "ix_other_fts"),
     ],
 )
-@pytest.mark.parametrize("physical_option", ["", "FTS_INDEX_TYPE = MATCH"])
+@pytest.mark.parametrize("physical_option", ["", "FTS_INDEX_TYPE = MATCH", "FTS_INDEX_TYPE = PHRASE_MATCH"])
 def test_fulltext_semantic_changes_have_distinct_fingerprints(old: str, new: str, physical_option: str) -> None:
     tables = {
         name: ddl.replace(
