@@ -31,7 +31,7 @@ from typing import Any
 
 import httpx
 import pytest
-from build_intel_managed_wheel import native_build_environment, verify_backend
+from build_intel_managed_wheel import _check_linkage, native_build_environment, verify_backend
 from ci_managed_resource_smoke import MAX_DIAGNOSTIC_BYTES, preserve_failure
 from prepare_managed_resources import (
     _locked_dependencies,
@@ -326,6 +326,54 @@ def test_smoke_failure_keeps_bounded_logs_after_temporary_cleanup(tmp_path: Path
     assert "raw error content" not in str(failed.value)
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="requires real Mach-O compiler and load-command inspection")
+@pytest.mark.parametrize("architecture", ["arm64", "x86_64"])
+@pytest.mark.parametrize("external", [None, "dependency", "rpath"])
+def test_native_linkage_distinguishes_install_name_from_loaded_dependencies(
+    tmp_path: Path, architecture: str, external: str | None
+) -> None:
+    tree = tmp_path / "wheel"
+    tree.mkdir()
+    source = tmp_path / "extension.c"
+    source.write_text("int resource_probe(void) { return 1; }\n", encoding="utf-8")
+    sdk = (
+        os.environ.get("SDKROOT")
+        or subprocess.check_output(["/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True).strip()
+    )
+    compiler = ["/usr/bin/clang", "-dynamiclib", "-arch", architecture, "-isysroot", sdk]
+    arguments = []
+    if external == "dependency":
+        dependency = tmp_path / "libexternal.dylib"
+        subprocess.run(
+            [
+                *compiler,
+                str(source),
+                "-Wl,-install_name,/opt/producer-fixture/libexternal.dylib",
+                "-o",
+                str(dependency),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        source.write_text("extern int resource_probe(void); int extension(void) { return resource_probe(); }\n")
+        arguments.append(str(dependency))
+    elif external == "rpath":
+        arguments.append("-Wl,-rpath,/opt/producer-fixture/lib")
+    subprocess.run(
+        [*compiler, str(source), *arguments, "-Wl,-install_name,@rpath/extension.so", "-o", str(tree / "extension.so")],
+        check=True,
+        capture_output=True,
+    )
+    if external is not None:
+        with pytest.raises(ValueError, match="non-system libraries or runtime search paths"):
+            _check_linkage(tree, dict(os.environ))
+    else:
+        (linked,) = _check_linkage(tree, dict(os.environ))
+        assert linked["install_names"] == ["@rpath/extension.so"]
+        assert linked["dependencies"] and all(path.startswith("/usr/lib/") for path in linked["dependencies"])
+        assert not linked["rpaths"]
+
+
 @pytest.fixture(scope="module")
 def native_candidates(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path, Path, str]:
     selected = os.environ.get("POWERCONTEXT_RESOURCE_TEST_INPUTS")
@@ -430,13 +478,7 @@ def test_native_candidate_is_consumed_and_runs_independent_ops(native_candidates
 def test_native_version_mismatch_is_rejected_before_output(native_candidates, tmp_path: Path) -> None:
     _first, _second, inputs, _expected = native_candidates
     copied = tmp_path / "inputs"
-    shutil.copytree(
-        inputs,
-        copied,
-        copy_function=lambda source, target: (
-            shutil.copyfile(source, target) if Path(source).name == "inputs.json" else os.link(source, target)
-        ),
-    )
+    shutil.copytree(inputs, copied, copy_function=shutil.copyfile)
     metadata = json.loads((copied / "inputs.json").read_bytes())
     metadata["server_version"] = "999.0.0"
     (copied / "inputs.json").write_bytes(json_bytes(metadata))

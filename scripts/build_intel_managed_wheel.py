@@ -89,13 +89,33 @@ def _retain_native_licenses(tree: Path, vendor: Path, openssl: Path, crates: lis
 def _check_linkage(tree: Path, env: dict[str, str]) -> list[dict[str, Any]]:
     linkage = []
     for library in tree.rglob("*.so"):
-        output = subprocess.check_output(["/usr/bin/otool", "-L", str(library)], env=env, text=True)
-        dependencies = [line.strip().split(" (", 1)[0] for line in output.splitlines()[1:]]
         commands = subprocess.check_output(["/usr/bin/otool", "-l", str(library)], env=env, text=True)
-        rpaths = re.findall(r"cmd LC_RPATH\n.*?\n\s*path (.*?) \(offset", commands)
+        dependencies, rpaths, install_names = [], [], []
+        for block in re.split(r"\nLoad command \d+\n", commands):
+            command = re.search(r"^\s*cmd (LC_\w+)$", block, re.MULTILINE)
+            if command is None:
+                continue
+            kind = command[1]
+            if kind == "LC_RPATH":
+                field, values = "path", rpaths
+            elif kind.endswith("_DYLIB"):
+                # otool -L also lists LC_ID_DYLIB: the extension's own identity
+                # is not a dependency loaded from an external runtime directory.
+                field, values = "name", install_names if kind == "LC_ID_DYLIB" else dependencies
+            else:
+                continue
+            value = re.search(rf"^\s*{field} (.*?) \(offset \d+\)$", block, re.MULTILINE)
+            if value is None:
+                raise ValueError("Native extension has an unreadable dynamic-library load command")
+            values.append(value[1])
         if any(not item.startswith(("/usr/lib/", "/System/Library/")) for item in [*dependencies, *rpaths]):
             raise ValueError("Native cryptography wheel depends on non-system libraries or runtime search paths")
-        linkage.append({"path": library.relative_to(tree).as_posix(), "dependencies": dependencies, "rpaths": rpaths})
+        linkage.append({
+            "path": library.relative_to(tree).as_posix(),
+            "install_names": install_names,
+            "dependencies": dependencies,
+            "rpaths": rpaths,
+        })
     if not linkage:
         raise ValueError("Native cryptography wheel contains no checked native extension")
     return linkage
