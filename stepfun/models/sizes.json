@@ -1,0 +1,18 @@
+{
+  "model": "BAAI/bge-small-zh-v1.5",
+  "dim": 512,
+  "fp32": {
+    "bytes": 94835369,
+    "size": "90.44 MB"
+  },
+  "fp16": {
+    "bytes": 47479846,
+    "size": "45.28 MB",
+    "ratio_vs_fp32": "50.07%"
+  },
+  "int8": {
+    "bytes": 23902398,
+    "size": "22.80 MB",
+    "ratio_vs_fp32": "25.20%"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "stepfun-seekdb-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Mini knowledge base server: Express + seekdb embedded (hybrid search). Runs on Linux (WSL2/Docker/native).",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "healthcheck": "node scripts/healthcheck.mjs"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "seekdb": "1.4.0"
+  },
+  "overrides": {
+    "@seekdb/js-bindings": "1.4.0"
+  }
+}
